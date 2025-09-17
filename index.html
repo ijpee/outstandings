@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Processor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Main Content -->
+        <div id="mainContent">
+            <div class="header-section">
+                <h1>Kamar Outstandings Converter</h1>
+                <button id="helpBtn" class="help-btn">How it Works</button>
+            </div>
+            <p>Upload the Kamar Charged CSV file(s) received from the school. <br> This tool will then convert them into the correct format for creating the outstandings in Kindo.</p>
+            <input type="file" id="csvInput" accept=".csv" multiple/>
+            <div id="fileName" class="file-name"></div>
+            <br>
+
+            <!-- Seed roll paste-only input -->
+
+            <label for="seedRollPaste">Recommended: Paste the full seed roll text here (tab-separated) to include current students only:</label>
+            <textarea id="seedRollPaste" rows="6" style="width:100%" placeholder="Paste the seed roll here..."></textarea>
+            <button id="loadSeedRollPaste" type="button">Load seed roll</button>
+            <div id="seedRollPasteStatus" class="file-name"></div>
+            <br>
+
+        <div class="input-section" style="margin-bottom: 1em;">
+            <table>
+                <tr>
+                    <td><label for="schoolNameInput">School Name:</label></td>
+                    <td><input type="text" id="schoolNameInput" style="max-width: 120px;" /></td>
+                </tr>
+                <tr>
+                    <td><label for="moeInput">MOE:</label></td>
+                    <td><input type="text" id="moeInput" maxlength="4" pattern="\d{4}" style="max-width: 120px;" /></td>
+                </tr>
+            </table>
+        </div>
+        <div class="process-section">
+            <button id="processBtn" class="process-btn" disabled>Process File</button>
+            <div id="status" class="status"></div>
+        </div>
+        
+        <div class="output-section">
+            <div id="preview" class="preview"></div>
+            <br>
+            <button id="resetBtn">Reset</button>
+        </div>
+        <h2>Privacy & Security:</h2>
+        <p>All processing happens locally in your browser—no data is ever sent to a server.</p>
+    </div>    <!-- Help Content (hidden by default) -->
+    <div id="helpContent" style="display: none;">
+        <div class="help-header">
+            <button id="backBtn" class="back-btn">← Back</button>
+            <h1>How it Works</h1>
+        </div>
+        
+        <div class="help-section">
+            <h2>What does this tool do?</h2>
+            <p>This tool converts Kamar "Charged" CSV files into the correct format for importing outstandings into Kindo.</p>
+            
+            <h2>How to use:</h2>
+            <ol>
+                <li>Select one or more CSV files exported from Kamar</li>
+                <li>Enter the School Name and MOE number</li>
+                <li>Optionally upload the current seed roll (tab-separated text file) to filter outstandings to enrolled students</li>
+                <li>Click "Process File" to convert the data</li>
+                <li>Download the converted files for Kindo import</li>
+            </ol>
+            
+            <h2>Data Processing:</h2>
+            <p>The tool performs the following transformations on your Kamar CSV data:</p>
+            
+            <h3>1. Column Filtering & Cleanup</h3>
+            <ul>
+                <li><strong>Removes unnecessary columns:</strong> Notes, Payment_Date, Amount_Paid, RollOver_Student, Payers DD/AP info, zc_Amount_GST, zc_Level_LiveGrid, and House_Cached</li>
+                <li><strong>Keeps these columns:</strong> student_id, Payer_Name_Cached, zc_Tutor_LiveGrid, zc_Title_Overide, Title_Cached, Date_Added, zc_Amount_Total, zc_Amount_Owing, zc_LeftDate, Account_Cached, and Department_Cached</li>
+                <li><strong>Filters the following:</strong>
+                    <ul>
+                        <li>Rows with zero or blank amount owing are removed.</li>
+                        <li>Rows where the left date is in the past are removed.</li>
+                        <li>Staff or admin records are removed if Tutor_LiveGrid contains the words staff, admin, teacher, or employee.</li>
+                        <li>Pre-enrollment students are removed if Tutor_LiveGrid contains pre-enrol, preenrol, or enrol.</li>
+                        <li>Any student with a non-numeric student ID (containing letters or special characters) is removed.</li>
+                    </ul>
+                </li>
+            </ul>
+            
+            <h3>2. Seed Roll Filtering (Optional)</h3>
+            <ul>
+                <li>If a seed roll is provided, the tool filters outstandings to only include currently enrolled students.</li>
+                <li>In Kindo, export the current roll as a tab-separated text file, open it, copy all text, paste it and click “Load from Pasted Text”.</li>
+            </ul>
+            
+            <h3>3. Creating "Kindo Friendly" Product Name</h3>
+            <ul>
+                <li><strong>Extracts year from dates:</strong> Takes the year from the "Date_Added" field</li>
+                <li><strong>Standardizes naming:</strong> Prepends the year to the raw Title (e.g., "2024 School Trip")</li>
+                <li><strong>Cleans formatting:</strong> Removes the year from the original title (since it’s now prepended), strips empty parentheses/brackets, and trims extra spaces</li>
+                <li><strong>Sanitizes invalid characters:</strong> Automatically removes any characters that aren't allowed in Kindo (such as quotes, special symbols, etc.) to prevent validation errors</li>
+                <li><strong>Enforces length limits:</strong> Truncates product names longer than 100 characters to ensure compatibility</li>
+                <li><strong>Handles empty names:</strong> Provides a fallback name ("Unnamed Payable") if sanitization results in a blank product name</li>
+                <li>This new "Kindo Friendly" product name will be used for the Payables, PCats, and Outstandings files below.</li>
+            </ul>
+            
+            <h3>4. Creates Multiple Output Files</h3>
+            <ul>
+                <li><strong>Processed Data:</strong>
+                    <ul>
+                        <li>Contains the cleaned and filtered data as described above</li>
+                        <li>This data is used to create the other output files</li>
+                        <li>It can also be exported for reviewing or verifying the data</li>
+                    </ul>
+                </li>
+                <li><strong>Payables:</strong>
+                    <ul>
+                        <li>Creates a list of all the unique payables the school uses</li>
+                        <li>Removes duplicate entries so each product appears only once</li>
+                        <li>Includes the price</li>
+                        <li>Adds GST status (based on <code>zc_Amount_Owing_GST</code>)</li>
+                        <li>Includes donation flag (if the product name contains the words "donation" or "contribution")</li>
+                        <li>Adds "~LDC_" prefix to the ledger code and removes anything after the first forward slash (if present) for each product</li>
+                    </ul>
+                </li>
+                <li><strong>Payable Categories (PCats):</strong>
+                    <ul>
+                        <li>Creates a list of all the categories the school uses</li>
+                        <li>Removes duplicate entries so each product appears only once</li>
+                        <li>Links each payable to a category using the <code>Department_Cached</code> field from Kamar</li>
+                    </ul>
+                </li>
+                <li><strong>Outstandings:</strong>
+                    <ul>
+                        <li>Creates a record for each student’s outstanding charge</li>
+                        <li>Appends the MOE number to the student ID (e.g."22190.0377")</li>
+                        <li>Includes the product name, amount owing, and leaves caregiver_id empty for Kindo import</li>
+                    </ul>
+                </li>
+                <li><strong>Removed Students:</strong>
+                    <ul>
+                        <li>Creates a record for each removed student. Including the reason for the removal</li>
+                        <li>This helps track which students were removed and can be used as a reference if the school needs one</li>
+                    </ul>
+                </li>
+            </ul>
+            
+            <h2>Privacy & Security:</h2>
+            <p>All processing happens locally in your browser—no data is ever sent to a server.</p>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
