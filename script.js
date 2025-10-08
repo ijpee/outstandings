@@ -238,6 +238,8 @@ function resetAll() {
     processedData = [];
     removedStudents = []; // Reset removed students tracking
     seedRollData = []; // Reset seed roll data
+    seedRollIdMap = {}; // Reset seed roll ID mapping
+    excludeStudentsData = []; // Reset exclusion data
     // Reset school name and MOE inputs
     const schoolNameInput = document.getElementById('schoolNameInput');
     const moeInput = document.getElementById('moeInput');
@@ -246,6 +248,9 @@ function resetAll() {
     // Reset seed roll paste input
     if (seedRollPaste) seedRollPaste.value = '';
     if (seedRollPasteStatus) seedRollPasteStatus.textContent = '';
+    // Reset exclude file input
+    if (excludeFileInput) excludeFileInput.value = '';
+    if (excludeFileName) excludeFileName.textContent = '';
     // Hide raw button on reset
     if (rawBtn) rawBtn.style.display = 'none';
     toggleDownloadButtons(false);
@@ -262,6 +267,8 @@ let processedData = [];
 let processingStats = {};
 let removedStudents = []; // Track removed students for verification
 let seedRollData = []; // Store parsed seed roll student IDs
+let seedRollIdMap = {}; // Map base student ID to full ID with MOE (e.g., "24316" -> "24316.4122")
+let excludeStudentsData = []; // Store student IDs to exclude from previously uploaded outstandings
 
 // DOM elements
 const csvInput = document.getElementById('csvInput');
@@ -273,6 +280,9 @@ const preview = document.getElementById('preview');
 const seedRollPaste = document.getElementById('seedRollPaste');
 const loadSeedRollPaste = document.getElementById('loadSeedRollPaste');
 const seedRollPasteStatus = document.getElementById('seedRollPasteStatus');
+// Exclude students file upload elements
+const excludeFileInput = document.getElementById('excludeFileInput');
+const excludeFileName = document.getElementById('excludeFileName');
 // Event listeners
 if (csvInput) {
     csvInput.addEventListener('change', handleFileSelect);
@@ -282,6 +292,9 @@ if (processBtn) {
 }
 if (loadSeedRollPaste) {
     loadSeedRollPaste.addEventListener('click', handleSeedRollPasteLoad);
+}
+if (excludeFileInput) {
+    excludeFileInput.addEventListener('change', handleExcludeFileSelect);
 }
 
 // Add text area and button for payable names to remove (after processBtn)
@@ -624,11 +637,100 @@ function handleSeedRollPasteLoad() {
     showStatus(`Seed roll loaded from pasted text with ${seedRollData.length} student IDs.`, 'success');
 }
 
+// Handle exclude file selection
+function handleExcludeFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+        showStatus('Please select a valid CSV file for exclusion.', 'error');
+        if (excludeFileName) excludeFileName.textContent = '';
+        excludeStudentsData = [];
+        return;
+    }
+    
+    if (excludeFileName) excludeFileName.textContent = file.name;
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const rows = parseCSV(e.target.result);
+        if (rows.length < 2) {
+            showStatus('Exclude file appears empty or invalid.', 'error');
+            excludeStudentsData = [];
+            return;
+        }
+        
+        // Find student_id column (should be first column in outstandings.csv)
+        const headers = rows[0];
+        const studentIdIdx = headers.indexOf('student_id');
+        
+        if (studentIdIdx === -1) {
+            showStatus('Could not find student_id column in exclude file.', 'error');
+            excludeStudentsData = [];
+            return;
+        }
+        
+        // Extract all unique student IDs (handles duplicates automatically)
+        const idSet = new Set();
+        rows.slice(1).forEach(row => {
+            const id = (row[studentIdIdx] || '').trim();
+            if (id) idSet.add(id);
+        });
+        
+        excludeStudentsData = Array.from(idSet);
+        showStatus(`Loaded ${excludeStudentsData.length} unique student IDs to exclude.`, 'success');
+        console.log('Exclude list loaded:', excludeStudentsData.length, 'unique students');
+    };
+    
+    reader.onerror = function() {
+        showStatus('Error reading exclude file.', 'error');
+        excludeStudentsData = [];
+    };
+    
+    reader.readAsText(file);
+}
+
 // Parse seed roll text (tab or comma separated, extract student IDs from "student" rows)
 function parseSeedRoll(text) {
+    // Try parsing as JSON first (from Kindo export)
+    try {
+        const data = JSON.parse(text);
+        if (data.rtype === "roll_student_search_result" && Array.isArray(data.matches)) {
+            const seen = new Set();
+            const ids = [];
+            const idMap = {};
+            
+            data.matches.forEach((student, index) => {
+                const fullId = (student.student_id_ext || '').trim();
+                if (fullId && fullId.includes('.')) {
+                    if (!seen.has(fullId)) {
+                        seen.add(fullId);
+                        ids.push(fullId);
+                        
+                        // Extract base ID (before the dot) and map it to full ID
+                        const baseId = fullId.split('.')[0];
+                        idMap[baseId] = fullId;
+                        
+                        console.log(`✓ Parsed student ID from entry ${index + 1}: "${fullId}" (base: ${baseId})`);
+                    }
+                }
+            });
+            
+            seedRollIdMap = idMap;
+            console.log(`📊 Total parsed seed roll IDs: ${ids.length}`);
+            console.log(`📊 ID mapping created with ${Object.keys(idMap).length} base IDs`);
+            return ids;
+        }
+    } catch (e) {
+        // Not JSON, continue to TSV/CSV parsing below
+    }
+    
+    // Fall back to TSV/CSV parsing
     const lines = text.replace(/\r\n?/g, '\n').split('\n');
     const seen = new Set();
     const ids = [];
+    const idMap = {};
+    
     lines.forEach((line, index) => {
         const trimmedLine = line.trim();
         if (!trimmedLine) return; // Skip empty lines
@@ -641,21 +743,29 @@ function parseSeedRoll(text) {
 
         const tag = (columns[0] || '').trim().toLowerCase();
         if (tag === 'student' && columns[1]) {
-            const id = (columns[1] || '').trim();
-            if (id && id.includes('.')) {
-                if (!seen.has(id)) {
-                    seen.add(id);
-                    ids.push(id);
+            const fullId = (columns[1] || '').trim();
+            if (fullId && fullId.includes('.')) {
+                if (!seen.has(fullId)) {
+                    seen.add(fullId);
+                    ids.push(fullId);
+                    
+                    // Extract base ID (before the dot) and map it to full ID
+                    const baseId = fullId.split('.')[0];
+                    idMap[baseId] = fullId;
+                    
+                    console.log(`✓ Parsed student ID from line ${index + 1}: "${fullId}" (base: ${baseId})`);
                 }
-                console.log(`✓ Parsed student ID from line ${index + 1}: "${id}"`);
             } else {
-                console.log(`⚠ Invalid student ID format in line ${index + 1}: "${id}"`);
+                console.log(`⚠ Invalid student ID format in line ${index + 1}: "${fullId}"`);
             }
         } else if (tag === 'caregiver') {
             // ignore caregiver lines
         }
     });
-    console.log(`📊 Total parsed seed roll IDs: ${ids.length}`, ids);
+    
+    seedRollIdMap = idMap;
+    console.log(`📊 Total parsed seed roll IDs: ${ids.length}`);
+    console.log(`📊 ID mapping created with ${Object.keys(idMap).length} base IDs`);
     return ids;
 }
 
@@ -820,6 +930,7 @@ function transformData(data) {
         removedPreEnrol: 0,
     removedInvalidId: 0,
     removedSeedRoll: 0,
+        removedExcluded: 0,
         finalCount: 0
     };
     
@@ -978,10 +1089,35 @@ function transformData(data) {
     // Track final count after initial filtering
     processingStats.finalCount = newRows.length;
     
-    // Append MOE to student_id for matching and output
+    // Append MOE to student_id using seed roll mapping (or fallback to manual MOE input)
     const moe = moeInput ? moeInput.value.trim() : '';
-    if (moe && /^\d{4}$/.test(moe)) {
-        console.log('Appending MOE', moe, 'to student IDs');
+    const hasSeedRollMap = Object.keys(seedRollIdMap).length > 0;
+    
+    if (hasSeedRollMap) {
+        console.log('Using seed roll ID mapping for MOE appending (' + Object.keys(seedRollIdMap).length + ' mappings)');
+        newRows.forEach(row => {
+            const studentIdIdx = newHeaders.indexOf("student_id");
+            const currentId = row[studentIdIdx];
+            
+            if (currentId && !currentId.includes('.')) {
+                // Look up the correct full ID from seed roll
+                const baseId = currentId.trim();
+                const fullId = seedRollIdMap[baseId];
+                
+                if (fullId) {
+                    row[studentIdIdx] = fullId;
+                    console.log('Mapped ID from seed roll:', baseId, '->', fullId);
+                } else if (moe && /^\d{4}$/.test(moe)) {
+                    // Fallback to manual MOE if not found in seed roll
+                    row[studentIdIdx] = baseId + '.' + moe;
+                    console.log('ID not in seed roll, using manual MOE:', baseId, '->', row[studentIdIdx]);
+                } else {
+                    console.log('⚠ ID not in seed roll and no valid MOE provided:', baseId);
+                }
+            }
+        });
+    } else if (moe && /^\d{4}$/.test(moe)) {
+        console.log('No seed roll mapping available, appending manual MOE', moe, 'to all student IDs');
         newRows.forEach(row => {
             const studentIdIdx = newHeaders.indexOf("student_id");
             if (row[studentIdIdx] && !row[studentIdIdx].includes('.')) {
@@ -993,7 +1129,7 @@ function transformData(data) {
             }
         });
     } else {
-        console.log('No MOE to append or invalid MOE:', moe);
+        console.log('⚠ No seed roll mapping and no valid MOE provided - student IDs may be incomplete');
     }
     
     // Apply seed roll filtering if seed roll is loaded
@@ -1030,6 +1166,38 @@ function transformData(data) {
 
     } else {
         console.log('SEED ROLL FILTERING: No seed roll data loaded, skipping filtering');
+    }
+    
+    // Apply exclusion filter if previously uploaded students list is loaded
+    if (excludeStudentsData.length > 0) {
+        console.log('EXCLUSION FILTERING: Starting with', newRows.length, 'rows and', excludeStudentsData.length, 'students to exclude');
+        const excludeSet = new Set(excludeStudentsData.map(id => (id || '').trim()));
+        const filteredRows = [];
+        const removedForExclusion = [];
+        newRows.forEach(row => {
+            const studentIdIdx = newHeaders.indexOf("student_id");
+            const studentId = (row[studentIdIdx] || '').trim();
+            if (excludeSet.has(studentId)) {
+                removedForExclusion.push({
+                    student_id: studentId,
+                    payer_name: row[newHeaders.indexOf("Payer_Name_Cached")] || '',
+                    tutor: row[newHeaders.indexOf("zc_Tutor_LiveGrid")] || '',
+                    title: row[newHeaders.indexOf("Title_Cached")] || '',
+                    amount_owing: row[newHeaders.indexOf("zc_Amount_Owing")] || '',
+                    reason: 'Already uploaded to Kindo'
+                });
+            } else {
+                filteredRows.push(row);
+            }
+        });
+        console.log('EXCLUSION FILTERING: After filtering - kept:', filteredRows.length, 'removed:', removedForExclusion.length);
+        newRows = filteredRows;
+        removedStudents.push(...removedForExclusion);
+        processingStats.removedExcluded = removedForExclusion.length;
+        processingStats.finalCount = newRows.length;
+        console.log('EXCLUSION FILTERING: Updated stats - removedExcluded:', processingStats.removedExcluded);
+    } else {
+        console.log('EXCLUSION FILTERING: No exclusion list loaded, skipping');
     }
     
     return [newHeaders, ...newRows];
@@ -1087,6 +1255,9 @@ function displayPreview(data) {
     }
     if (processingStats.removedSeedRoll > 0) {
         html += `Students removed (not in seed roll): ${processingStats.removedSeedRoll}<br>`;
+    }
+    if (processingStats.removedExcluded > 0) {
+        html += `Students removed (already uploaded): ${processingStats.removedExcluded}<br>`;
     }
     if (currentStats.filteredCount > 0) {
         html += `Students removed (filtered by payable name): ${currentStats.filteredCount}<br>`;

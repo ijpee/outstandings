@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kamar Outstandings Converter</title>
+    <link rel="stylesheet" href="style_new.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Kamar Outstandings Converter</h1>
+            <button id="helpBtn" class="btn-secondary">How it Works</button>
+            <a href="index.html" style="margin-left:auto;font-size:0.8rem;text-decoration:none;color:#1565c0;">Switch to legacy version</a>
+        </div>
+
+        <!-- Main Content -->
+        <main id="mainContent">
+            
+            <!-- Step 1: Upload CSV -->
+            <section class="card card-required">
+                <div class="card-header">
+                    <span class="step-number">1</span>
+                    <h2>Upload Kamar Export</h2>
+                    <span class="badge badge-required">Required</span>
+                </div>
+                <p>Upload the CSV file(s) exported from Kamar.</p>
+                <input type="file" id="csvInput" accept=".csv" multiple style="display: none;">
+                <button id="csvInputBtn" class="btn-primary">Choose CSV File(s)</button>
+                <div id="fileName" class="file-status"></div>
+            </section>
+
+            <!-- Step 2: Seed Roll -->
+            <section class="card card-important">
+                <div class="card-header">
+                    <span class="step-number">2</span>
+                    <h2>Load Seed Roll</h2>
+                    <span class="badge badge-important">Strongly Recommended</span>
+                </div>
+                <div class="info-box">
+                    <strong>Why this matters:</strong>
+                    <ul>
+                        <li>Ensures correct MOE numbers for each student</li>
+                        <li>Filters out students who have left</li>
+                        <li>Prevents import errors in Kindo</li>
+                    </ul>
+                </div>
+                <label for="seedRollPaste">Paste the full seed roll JSON from Kindo:</label>
+                <textarea id="seedRollPaste" rows="6" placeholder='Paste seed roll JSON here (e.g., {"rtype": "roll_student_search_result", "matches": [...]})'></textarea>
+                <button id="loadSeedRollBtn" class="btn-primary">Load Seed Roll</button>
+                <div id="seedRollStatus" class="status-message"></div>
+            </section>
+
+            <!-- Step 3: Configuration -->
+            <section class="card">
+                <div class="card-header">
+                    <span class="step-number">3</span>
+                    <h2>Configuration</h2>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="schoolNameInput">School Name (for filenames):</label>
+                        <input type="text" id="schoolNameInput" placeholder="e.g., Nelson College">
+                    </div>
+                    <div class="form-group">
+                        <label for="moeInput">MOE Number (fallback only):</label>
+                        <input type="text" id="moeInput" maxlength="4" pattern="\d{4}" placeholder="e.g., 0294">
+                        <small>Only used if student not found in seed roll</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Step 4: Optional Filters -->
+            <section class="card card-collapsible">
+                <div class="card-header clickable" id="filtersToggle">
+                    <span class="step-number">4</span>
+                    <h2>Optional Filters</h2>
+                    <span class="badge">Optional</span>
+                    <span class="toggle-icon">▼</span>
+                </div>
+                <div id="filtersContent" class="collapsible-content" style="display: none;">
+                    <!-- Exclude Previously Uploaded -->
+                    <div class="filter-section">
+                        <h3>Exclude Previously Uploaded Students</h3>
+                        <p>Upload a previous outstandings.csv to avoid re-uploading the same students.</p>
+                        <input type="file" id="excludeFileInput" accept=".csv" style="display: none;">
+                        <button id="excludeFileBtn" class="btn-secondary">Choose Outstandings CSV</button>
+                        <div id="excludeFileName" class="file-status"></div>
+                    </div>
+
+                    <!-- Filter by Payable Names -->
+                    <div class="filter-section">
+                        <h3>Filter by Payable Names</h3>
+                        <p>Remove specific charges from the output (one per line).</p>
+                        <textarea id="removeNamesTextarea" rows="4" placeholder="Enter payable names to remove, e.g.:&#10;2023 School Trip&#10;2024 Uniform Deposit"></textarea>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Process Button -->
+            <div class="process-section">
+                <button id="processBtn" class="btn-process" disabled>Process Data</button>
+                <div id="status" class="status-message"></div>
+            </div>
+
+            <!-- Results -->
+            <section id="resultsSection" class="card" style="display: none;">
+                <div class="card-header">
+                    <h2>Processing Results</h2>
+                </div>
+                
+                <!-- Statistics -->
+                <div id="statsContainer"></div>
+
+                <!-- Preview -->
+                <details>
+                    <summary>Preview Data (first 10 rows)</summary>
+                    <div id="preview" class="preview"></div>
+                </details>
+
+                <!-- Downloads -->
+                <div class="downloads-section">
+                    <h3>Download Files for Kindo</h3>
+                    <div class="download-group">
+                        <button id="payablesBtn" class="btn-download btn-kindo">Payables CSV</button>
+                        <button id="pcatsBtn" class="btn-download btn-kindo">Pcats CSV</button>
+                        <button id="outstandingsBtn" class="btn-download btn-kindo">Outstandings CSV</button>
+                    </div>
+
+                    <h3>Additional Files</h3>
+                    <div class="download-group">
+                        <button id="removedBtn" class="btn-download">Removed Students CSV</button>
+                        <button id="processedBtn" class="btn-download">Processed Data CSV</button>
+                        <button id="rawBtn" class="btn-download">Raw CSV (with headers)</button>
+                    </div>
+                </div>
+
+                <button id="resetBtn" class="btn-secondary">Start Over</button>
+            </section>
+
+        </main>
+
+        <!-- Help Content -->
+        <aside id="helpContent" style="display: none;">
+            <button id="backBtn" class="btn-secondary">← Back</button>
+            <h1>How it Works</h1>
+            
+            <section class="help-section">
+                <h2>What does this tool do?</h2>
+                <p>This tool converts Kamar "Charged" CSV files into the correct format for importing outstandings into Kindo.</p>
+                
+                <h2>Step-by-Step Guide:</h2>
+                <ol>
+                    <li><strong>Upload CSV:</strong> Select one or more CSV files exported from Kamar</li>
+                    <li><strong>Load Seed Roll:</strong> Paste the current student roll from Kindo (strongly recommended)</li>
+                    <li><strong>Configure:</strong> Enter school name and MOE number</li>
+                    <li><strong>Optional Filters:</strong> Exclude previously uploaded students or filter by payable names</li>
+                    <li><strong>Process:</strong> Click "Process Data" to convert</li>
+                    <li><strong>Download:</strong> Get the three Kindo files (payables, pcats, outstandings)</li>
+                </ol>
+                
+                <h2>Data Processing:</h2>
+                <h3>Automatic Filtering</h3>
+                <ul>
+                    <li>Removes students with zero or blank amounts owing</li>
+                    <li>Removes students with past left dates</li>
+                    <li>Removes staff/admin records</li>
+                    <li>Removes pre-enrollment students</li>
+                    <li>Removes invalid student IDs</li>
+                </ul>
+
+                <h3>Seed Roll Benefits</h3>
+                <ul>
+                    <li>Automatically uses correct MOE numbers (handles multiple schools/campuses)</li>
+                    <li>Filters to only current enrolled students</li>
+                    <li>Prevents duplicate or incorrect data in Kindo</li>
+                </ul>
+
+                <h3>Output Files</h3>
+                <ul>
+                    <li><strong>Payables:</strong> Unique products with prices, GST status, and ledger codes</li>
+                    <li><strong>Pcats:</strong> Maps products to categories/departments</li>
+                    <li><strong>Outstandings:</strong> Student charges ready for Kindo import</li>
+                    <li><strong>Removed Students:</strong> Verification file showing filtered students</li>
+                </ul>
+            </section>
+
+            <div class="privacy-notice">
+                <h2>Privacy & Security</h2>
+                <p>All processing happens locally in your browser—no data is ever sent to a server.</p>
+            </div>
+        </aside>
+
+        <footer>
+            <p>All processing happens locally in your browser—no data is sent to any server.</p>
+        </footer>
+    </div>
+
+    <script src="script_new.js"></script>
+</body>
+</html>

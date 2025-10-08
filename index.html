@@ -14,6 +14,7 @@
                 <h1>Kamar Outstandings Converter</h1>
                 <button id="helpBtn" class="help-btn">How it Works</button>
             </div>
+            <p style="margin:8px 0 16px;font-size:0.95em;">Looking for the redesigned interface? <a href="index_new.html">Open the new version (beta)</a></p>
             <p>Upload the Kamar Charged CSV file(s) received from the school. <br> This tool will then convert them into the correct format for creating the outstandings in Kindo.</p>
             <input type="file" id="csvInput" accept=".csv" multiple/>
             <div id="fileName" class="file-name"></div>
@@ -26,6 +27,13 @@
             <button id="loadSeedRollPaste" type="button">Load seed roll</button>
             <div id="seedRollPasteStatus" class="file-name"></div>
             <br>
+
+            <h3>Exclude Previously Uploaded Students (Optional)</h3>
+            <p>Upload your previous outstandings.csv to exclude students who were already uploaded to Kindo.</p>
+            <button type="button" onclick="document.getElementById('excludeFileInput').click()">Choose Previous Outstandings CSV</button>
+            <input type="file" id="excludeFileInput" accept=".csv" style="display: none;">
+            <div id="excludeFileName" class="file-name"></div>
+            <br><br>
 
         <div class="input-section" style="margin-bottom: 1em;">
             <table>
