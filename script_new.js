@@ -464,7 +464,7 @@ const FileGenerator = {
         if (!Array.isArray(data) || data.length < 2) return [];
         
         const headers = ["product_name", "product_remarks2", "product_gst_status", 
-                        "product_is_donation", "product_ledgercode_or_remarks1", "product_price_in_dollars"];
+                        "product_is_donation", "product_ledgercode_or_remarks1", "product_price_in_dollars", "is_voluntary"];
         const colIdx = {};
         data[0].forEach((h, i) => { colIdx[h] = i; });
         
@@ -485,6 +485,9 @@ const FileGenerator = {
             const nameLower = String(productName).toLowerCase();
             const productIsDonation = (nameLower.includes("donation") || nameLower.includes("contribution")) ? "TRUE" : "FALSE";
             
+            // is_voluntary is "yes" if it's a donation, "no" otherwise
+            const isVoluntary = productIsDonation === "TRUE" ? "yes" : "no";
+            
             const ledger = row[colIdx["Account_Cached"]] || "";
             let productLedgerCode = ledger ? `~LDC_${ledger}` : "";
             if (productLedgerCode.includes("/")) {
@@ -493,7 +496,7 @@ const FileGenerator = {
             
             const productPrice = row[colIdx["zc_Amount_Total"]] || "";
             
-            rows.push([productName, "", productGstStatus, productIsDonation, productLedgerCode, productPrice]);
+            rows.push([productName, "", productGstStatus, productIsDonation, productLedgerCode, productPrice, isVoluntary]);
         }
         
         return [headers, ...rows];
