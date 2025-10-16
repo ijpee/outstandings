@@ -5,13 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kamar Outstandings Converter</title>
     <link rel="stylesheet" href="style_new.css">
+    <link rel="stylesheet" href="style_exceed_limit.css">
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>Kamar Outstandings Converter</h1>
-            <button id="helpBtn" class="btn-secondary">How it Works</button>
-            <a href="index.html" style="margin-left:auto;font-size:0.8rem;text-decoration:none;color:#1565c0;">Switch to legacy version</a>
+            <div class="header-actions">
+                <button id="helpBtn" class="btn-secondary">How it Works</button>
+                <a href="index.html" class="link-legacy">Switch to legacy version</a>
+            </div>
         </div>
 
         <!-- Main Content -->
@@ -22,7 +25,6 @@
                 <div class="card-header">
                     <span class="step-number">1</span>
                     <h2>Upload Kamar Export</h2>
-                    <span class="badge badge-required">Required</span>
                 </div>
                 <p>Upload the CSV file(s) exported from Kamar.</p>
                 <input type="file" id="csvInput" accept=".csv" multiple style="display: none;">
@@ -35,17 +37,9 @@
                 <div class="card-header">
                     <span class="step-number">2</span>
                     <h2>Load Seed Roll</h2>
-                    <span class="badge badge-important">Strongly Recommended</span>
                 </div>
-                <div class="info-box">
-                    <strong>Why this matters:</strong>
-                    <ul>
-                        <li>Ensures correct MOE numbers for each student</li>
-                        <li>Filters out students who have left</li>
-                        <li>Prevents import errors in Kindo</li>
-                    </ul>
-                </div>
-                <label for="seedRollPaste">Paste the full seed roll JSON from Kindo:</label>
+                <p class="help-note">This ensures correct MOE numbers for each student and filters out students who have left.</p>
+                <label class="instruction-label" for="seedRollPaste">Paste the full seed roll JSON from Kindo:</label>
                 <textarea id="seedRollPaste" rows="6" placeholder='Paste seed roll JSON here (e.g., {"rtype": "roll_student_search_result", "matches": [...]})'></textarea>
                 <button id="loadSeedRollBtn" class="btn-primary">Load Seed Roll</button>
                 <div id="seedRollStatus" class="status-message"></div>
@@ -65,7 +59,6 @@
                     <div class="form-group">
                         <label for="moeInput">MOE Number (fallback only):</label>
                         <input type="text" id="moeInput" maxlength="4" pattern="\d{4}" placeholder="e.g., 0294">
-                        <small>Only used if student not found in seed roll</small>
                     </div>
                 </div>
             </section>
@@ -111,6 +104,9 @@
                 
                 <!-- Statistics -->
                 <div id="statsContainer"></div>
+
+                <!-- Duplicates -->
+                <div id="duplicatesContainer" class="exceeds-limit-section"></div>
 
                 <!-- Preview -->
                 <details>

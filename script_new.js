@@ -560,6 +560,21 @@ const FileGenerator = {
 // ============================================================================
 
 const UI = {
+    renderDuplicates(duplicates) {
+        const container = document.getElementById('duplicatesContainer');
+        if (!container) return;
+        if (!duplicates || duplicates.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        let html = '<h3>Exceeds Application Limit:</h3>';
+        html += '<ul class="exceeds-limit-list">';
+        duplicates.forEach(payableName => {
+            html += `<li>${this.escapeHtml(payableName)}</li>`;
+        });
+        html += '</ul>';
+        container.innerHTML = html;
+    },
     showStatus(message, type = '') {
         const statusEl = document.getElementById('status');
         if (!statusEl) return;
@@ -772,6 +787,30 @@ const Processor = {
         UI.showStatus('Processing complete!', 'success');
         UI.renderStats();
         UI.renderPreview(data);
+        // Detect duplicates in outstandings (same student_id and payable_name)
+        state.csv.duplicates = [];
+        if (data.length > 1) {
+            const headers = data[0];
+            const idIdx = headers.indexOf("student_id");
+            const payableIdx = headers.indexOf("payable_name");
+            const seen = new Map();
+            const uniqueDuplicatePayables = new Set();
+            
+            for (let i = 1; i < data.length; i++) {
+                const row = data[i];
+                const key = `${row[idIdx]}||${row[payableIdx]}`;
+                if (seen.has(key)) {
+                    // We only need the payable name for display
+                    uniqueDuplicatePayables.add(row[payableIdx]);
+                } else {
+                    seen.set(key, i);
+                }
+            }
+            
+            // Convert Set to array of payable names only
+            state.csv.duplicates = Array.from(uniqueDuplicatePayables);
+        }
+        UI.renderDuplicates(state.csv.duplicates);
         UI.showResults();
     },
 

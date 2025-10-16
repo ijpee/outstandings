@@ -43,6 +43,21 @@ body {
     color: #1a1a1a;
 }
 
+/* Keep actions grouped to the right and prevent overlap */
+.header-actions {
+    display: inline-flex;
+    gap: 10px;
+    align-items: center;
+    margin-left: auto;
+    flex-shrink: 0; /* don't let buttons shrink over the title */
+}
+
+.link-legacy {
+    font-size: 0.8rem;
+    text-decoration: none;
+    color: #1565c0;
+}
+
 /* ============================================================================
    CARDS
    ============================================================================ */
@@ -169,6 +184,20 @@ body {
 
 .info-box li {
     margin-bottom: 4px;
+}
+
+/* subtle descriptive note under section headings */
+.help-note {
+    font-size: 0.85rem;
+    color: #666;
+    margin: 2px 0 10px 0; /* distinct spacing before instruction */
+}
+
+.instruction-label {
+    display: inline-block;
+    margin-bottom: 6px;
+    font-weight: 600;
+    color: #1a1a1a;
 }
 
 /* ============================================================================
@@ -508,12 +537,20 @@ footer {
 
     .header {
         flex-direction: column;
-        gap: 15px;
+        gap: 12px;
         align-items: flex-start;
     }
 
     .header h1 {
         font-size: 24px;
+    }
+
+    /* Stack actions under the title on small screens */
+    .header-actions {
+        margin-left: 0;
+        width: 100%;
+        gap: 8px;
+        flex-wrap: wrap;
     }
 
     .form-grid {

@@ -1,0 +1,24 @@
+/* Style for the exceeds application limit section */
+.exceeds-limit-section {
+    margin-top: 15px;
+    margin-bottom: 20px;
+}
+
+.exceeds-limit-section h3 {
+    color: #d32f2f;
+    margin-bottom: 10px;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.exceeds-limit-list {
+    list-style-type: disc;
+    padding-left: 25px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.exceeds-limit-list li {
+    margin-bottom: 4px;
+    padding-left: 5px;
+}
