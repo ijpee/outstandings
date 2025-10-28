@@ -3,14 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kamar Outstandings Converter</title>
+    <title>SMS Outstandings Converter</title>
     <link rel="stylesheet" href="style_new.css">
     <link rel="stylesheet" href="style_exceed_limit.css">
+    <!-- SheetJS for Excel file parsing -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Kamar Outstandings Converter</h1>
+            <h1>SMS Outstandings Converter</h1>
             <div class="header-actions">
                 <button id="helpBtn" class="btn-secondary">How it Works</button>
                 <a href="index.html" class="link-legacy">Switch to legacy version</a>
@@ -20,6 +22,18 @@
         <!-- Main Content -->
         <main id="mainContent">
             
+            <!-- SMS Selection -->
+            <div class="sms-selector-compact">
+                <label for="smsSelect">SMS System:</label>
+                <select id="smsSelect" class="sms-select">
+                    <option value="kamar" selected>Kamar</option>
+                    <option value="hero">Hero</option>
+                </select>
+            </div>
+
+            <!-- KAMAR SECTION -->
+            <div id="kamarSection">
+            
             <!-- Step 1: Upload CSV -->
             <section class="card card-required">
                 <div class="card-header">
@@ -28,7 +42,7 @@
                 </div>
                 <p>Upload the CSV file(s) exported from Kamar.</p>
                 <input type="file" id="csvInput" accept=".csv" multiple style="display: none;">
-                <button id="csvInputBtn" class="btn-primary">Choose CSV File(s)</button>
+                <button id="csvInputBtn" class="btn-primary">Choose File(s)</button>
                 <div id="fileName" class="file-status"></div>
             </section>
 
@@ -134,6 +148,124 @@
                 <button id="resetBtn" class="btn-secondary">Start Over</button>
             </section>
 
+            </div>
+            <!-- END KAMAR SECTION -->
+
+            <!-- HERO SECTION -->
+            <div id="heroSection" style="display: none;">
+            
+            <!-- Step 1: Upload CSV -->
+            <section class="card card-required">
+                <div class="card-header">
+                    <span class="step-number">1</span>
+                    <h2>Upload Hero Export</h2>
+                </div>
+                <p>Upload the Excel file (.xlsx) exported from Hero SMS.</p>
+                <input type="file" id="csvInputHero" accept=".xlsx,.xls,.csv" style="display: none;">
+                <button id="csvInputBtnHero" class="btn-primary">Choose File(s)</button>
+                <div id="fileNameHero" class="file-status"></div>
+            </section>
+
+            <!-- Step 2: Seed Roll (REQUIRED for Hero) -->
+            <section class="card card-required">
+                <div class="card-header">
+                    <span class="step-number">2</span>
+                    <h2>Load Seed Roll</h2>
+                    <span class="badge badge-required">Required</span>
+                </div>
+                <p class="help-note">Hero requires the seed roll to match students using Name + Room combination.</p>
+                <label class="instruction-label" for="seedRollPasteHero">Paste the full seed roll JSON from Kindo:</label>
+                <textarea id="seedRollPasteHero" rows="6" placeholder='Paste seed roll JSON here (e.g., {"rtype": "roll_student_search_result", "matches": [...]})'></textarea>
+                <button id="loadSeedRollBtnHero" class="btn-primary">Load Seed Roll</button>
+                <div id="seedRollStatusHero" class="status-message"></div>
+            </section>
+
+            <!-- Step 3: Configuration -->
+            <section class="card">
+                <div class="card-header">
+                    <span class="step-number">3</span>
+                    <h2>Configuration</h2>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="schoolNameInputHero">School Name (for filenames):</label>
+                        <input type="text" id="schoolNameInputHero" placeholder="e.g., Nelson College">
+                    </div>
+                </div>
+            </section>
+
+            <!-- Step 4: Optional Filters -->
+            <section class="card card-collapsible">
+                <div class="card-header clickable" id="filtersToggleHero">
+                    <span class="step-number">4</span>
+                    <h2>Optional Filters</h2>
+                    <span class="badge">Optional</span>
+                    <span class="toggle-icon">▼</span>
+                </div>
+                <div id="filtersContentHero" class="collapsible-content" style="display: none;">
+                    <!-- Exclude Previously Uploaded -->
+                    <div class="filter-section">
+                        <h3>Exclude Previously Uploaded Students</h3>
+                        <label class="instruction-label" for="excludeStudentsTextareaHero">Paste student IDs to exclude (one per line):</label>
+                        <textarea id="excludeStudentsTextareaHero" rows="4" placeholder="Enter student IDs to exclude, e.g.:&#10;12345&#10;67890"></textarea>
+                    </div>
+
+                    <!-- Filter by Payable Names -->
+                    <div class="filter-section">
+                        <h3>Filter Out Specific Charges</h3>
+                        <label class="instruction-label" for="removeNamesTextareaHero">Enter payable names to exclude (one per line):</label>
+                        <textarea id="removeNamesTextareaHero" rows="4" placeholder="Enter payable names to remove, e.g.:&#10;2023 School Trip&#10;2024 Uniform Deposit"></textarea>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Process Button -->
+            <div class="process-section">
+                <button id="processBtnHero" class="btn-process" disabled>Process Data</button>
+                <div id="statusHero" class="status-message"></div>
+            </div>
+
+            <!-- Results -->
+            <section id="resultsSectionHero" class="card" style="display: none;">
+                <div class="card-header">
+                    <h2>Processing Results</h2>
+                </div>
+                
+                <!-- Statistics -->
+                <div id="statsContainerHero"></div>
+
+                <!-- Duplicates -->
+                <div id="duplicatesContainerHero" class="exceeds-limit-section"></div>
+
+                <!-- Preview -->
+                <details>
+                    <summary>Preview Data (first 10 rows)</summary>
+                    <div id="previewHero" class="preview"></div>
+                </details>
+
+                <!-- Downloads -->
+                <div class="downloads-section">
+                    <h3>Download Files for Kindo</h3>
+                    <div class="download-group">
+                        <button id="payablesBtnHero" class="btn-download btn-kindo">Payables CSV</button>
+                        <button id="pcatsBtnHero" class="btn-download btn-kindo">Pcats CSV</button>
+                        <button id="outstandingsBtnHero" class="btn-download btn-kindo">Outstandings CSV</button>
+                    </div>
+
+                    <h3>Additional Files</h3>
+                    <div class="download-group">
+                        <button id="removedBtnHero" class="btn-download">Removed Students CSV</button>
+                        <button id="processedBtnHero" class="btn-download">Processed Data CSV</button>
+                        <button id="rawBtnHero" class="btn-download">Raw CSV (with headers)</button>
+                    </div>
+                </div>
+
+                <button id="resetBtnHero" class="btn-secondary">Start Over</button>
+            </section>
+
+            </div>
+            <!-- END HERO SECTION -->
+
         </main>
 
         <!-- Help Content -->
@@ -192,6 +324,9 @@
         </footer>
     </div>
 
-    <script src="script_new.js"></script>
+    <!-- Load JS modules -->
+    <script src="js/kamar.js"></script>
+    <script src="js/hero.js"></script>
+    <script src="js/main.js"></script>
 </body>
 </html>
