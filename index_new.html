@@ -34,16 +34,34 @@
             <!-- KAMAR SECTION -->
             <div id="kamarSection">
             
-            <!-- Step 1: Upload CSV -->
+            <!-- Step 1: Upload Files (Charged required, Charges optional) -->
             <section class="card card-required">
                 <div class="card-header">
                     <span class="step-number">1</span>
-                    <h2>Upload Kamar Export</h2>
+                    <h2>Upload Files</h2>
                 </div>
-                <p>Upload the CSV file(s) exported from Kamar.</p>
-                <input type="file" id="csvInput" accept=".csv" multiple style="display: none;">
-                <button id="csvInputBtn" class="btn-primary">Choose File(s)</button>
-                <div id="fileName" class="file-status"></div>
+                <p class="help-note">Use raw CSVs exported directly from Kamar.</p>
+
+                <div class="form-grid">
+                    <!-- Charged first (required) -->
+                    <div class="form-group">
+                        <h3>Charged CSV(s)</h3>
+                        <p>You can select multiple years.</p>
+                        <input type="file" id="csvInput" accept=".csv" multiple style="display: none;">
+                        <button id="csvInputBtn" class="btn-primary">Choose File(s)</button>
+                        <div id="fileName" class="file-status"></div>
+                    </div>
+
+                    <!-- Charges second (optional) -->
+                    <div class="form-group">
+                        <h3>Charges CSV <span class="badge" style="vertical-align: middle;">Optional</span></h3>
+                        <p>Current year only.</p>
+                        <input type="file" id="chargesInput" accept=".csv" style="display: none;">
+                        <button id="chargesInputBtn" class="btn-secondary">Choose File</button>
+                        <div id="chargesFileName" class="file-status"></div>
+                    </div>
+                </div>
+
             </section>
 
             <!-- Step 2: Seed Roll -->
@@ -118,6 +136,9 @@
                 
                 <!-- Statistics -->
                 <div id="statsContainer"></div>
+
+                <!-- Unmatched Charges -->
+                <div id="unmatchedChargesContainer" class="unmatched-section"></div>
 
                 <!-- Duplicates -->
                 <div id="duplicatesContainer" class="exceeds-limit-section"></div>
@@ -275,41 +296,82 @@
             
             <section class="help-section">
                 <h2>What does this tool do?</h2>
-                <p>This tool converts Kamar "Charged" CSV files into the correct format for importing outstandings into Kindo.</p>
-                
-                <h2>Step-by-Step Guide:</h2>
+                <p>This tool converts Kamar “Charged” CSVs (plus an optional “Charges” CSV) into the three Kindo import files: <strong>Payables</strong>, <strong>PCats</strong>, and <strong>Outstandings</strong>.</p>
+
+                <h2>Step-by-step guide</h2>
                 <ol>
-                    <li><strong>Upload CSV:</strong> Select one or more CSV files exported from Kamar</li>
-                    <li><strong>Load Seed Roll:</strong> Paste the current student roll from Kindo (strongly recommended)</li>
-                    <li><strong>Configure:</strong> Enter school name and MOE number</li>
-                    <li><strong>Optional Filters:</strong> Exclude previously uploaded students or filter by payable names</li>
-                    <li><strong>Process:</strong> Click "Process Data" to convert</li>
-                    <li><strong>Download:</strong> Get the three Kindo files (payables, pcats, outstandings)</li>
+                    <li><strong>Upload files:</strong> Add the Kamar <em>Charged</em> CSV(s) (required), then optionally add the current‑year <em>Charges</em> CSV.</li>
+                    <li><strong>Load Seed Roll (recommended):</strong> Paste Kindo’s seed roll JSON to add the correct MOE and filter to current students.</li>
+                    <li><strong>Configure:</strong> Enter the school name (for filenames) and an MOE fallback.</li>
+                    <li><strong>Optional filters:</strong> Exclude previously uploaded students or remove specific product names.</li>
+                    <li><strong>Process:</strong> Click “Process Data”, then download the files for Kindo.</li>
                 </ol>
-                
-                <h2>Data Processing:</h2>
-                <h3>Automatic Filtering</h3>
+
+                <h2>What happens when you Process</h2>
+                <h3>1) Clean the Charged data</h3>
                 <ul>
-                    <li>Removes students with zero or blank amounts owing</li>
-                    <li>Removes students with past left dates</li>
-                    <li>Removes staff/admin records</li>
-                    <li>Removes pre-enrollment students</li>
-                    <li>Removes invalid student IDs</li>
+                    <li>Keeps only the columns Kindo needs.</li>
+                    <li>Removes rows that shouldn’t be billed:
+                        <ul>
+                            <li>Zero or blank amount owing</li>
+                            <li>Past left dates</li>
+                            <li>Staff/Admin and Pre‑enrol (based on Tutor text)</li>
+                            <li>Invalid student IDs</li>
+                            <li>Not in the seed roll (if provided)</li>
+                            <li>Explicitly excluded or filtered by name</li>
+                        </ul>
+                    </li>
+                    <li>Appends the school MOE to each student_id (e.g., “22190.0377”).</li>
+                    <li>Builds a clean product name (“payable_name”) using Year from Date_Added + cleaned Title.</li>
                 </ul>
 
-                <h3>Seed Roll Benefits</h3>
+                <h3>2) Read the Charges file (optional)</h3>
                 <ul>
-                    <li>Automatically uses correct MOE numbers (handles multiple schools/campuses)</li>
-                    <li>Filters to only current enrolled students</li>
-                    <li>Prevents duplicate or incorrect data in Kindo</li>
+                    <li>Ensures a header row and keys products by <strong>Title + Year</strong> (Year is taken from TTGrid).</li>
+                    <li>Stores Account, Department, GST, and Total for each product.</li>
+                    <li><strong>If zc_Amount_Total is blank or 0, the price is set to “1”.</strong></li>
+                    <li>Retains the raw rows to decide <strong>donations</strong> later.</li>
                 </ul>
 
-                <h3>Output Files</h3>
+                <h3>3) Build the outputs</h3>
                 <ul>
-                    <li><strong>Payables:</strong> Unique products with prices, GST status, ledger codes, and voluntary status (donations marked as "yes")</li>
-                    <li><strong>Pcats:</strong> Maps products to categories/departments</li>
-                    <li><strong>Outstandings:</strong> Student charges ready for Kindo import</li>
-                    <li><strong>Removed Students:</strong> Verification file showing filtered students</li>
+                    <li><strong>Payables.csv</strong> (one row per product)
+                        <ul>
+                            <li>Includes <em>all</em> products from Charges, plus any extra products found in Charged.</li>
+                            <li>If a product exists in both, the <strong>Charges version wins</strong> (price, GST, ledger, category).</li>
+                            <li><strong>Price:</strong> Charges zc_Amount_Total (minimum “1”); otherwise from Charged.</li>
+                            <li><strong>GST:</strong> “GST” if Charges zc_Amount_GST &gt; 0; otherwise “GST exempt”.</li>
+                            <li><strong>Donation:</strong> TRUE if the Charges row for that product has <em>any</em> non‑blank Amount_Donation; for products that only come from Charged, donation is inferred by name (“donation”/“contribution”).</li>
+                            <li><strong>Ledger:</strong> “~LDC_” + Account (anything after “/” is trimmed).</li>
+                            <li>Duplicate product names are removed.</li>
+                        </ul>
+                    </li>
+                    <li><strong>PCats.csv</strong> (product → category)
+                        <ul>
+                            <li>Maps each product to a category (Department).</li>
+                            <li>Uses the Department from Charges when available; otherwise uses Department_Cached from Charged.</li>
+                            <li><strong>Also includes products that exist only in Charges</strong> so the count matches Payables.</li>
+                        </ul>
+                    </li>
+                    <li><strong>Outstandings.csv</strong> (per‑student lines)
+                        <ul>
+                            <li>student_id (with MOE), payable_name, amount owing, caregiver_id blank.</li>
+                        </ul>
+                    </li>
+                    <li><strong>Review files</strong>
+                        <ul>
+                            <li><em>Processed Data:</em> the cleaned Charged rows the tool used.</li>
+                            <li><em>Removed Students:</em> every filtered row with the reason.</li>
+                            <li><em>Raw (with headers):</em> your input with normalized headers for reference.</li>
+                        </ul>
+                    </li>
+                </ul>
+
+                <h3>4) Summary you’ll see</h3>
+                <ul>
+                    <li>Original records, each removal reason, and <strong>Total removed</strong>.</li>
+                    <li><strong>Total payables</strong> (unique products) and <strong>Extra from Charges</strong> (products added because a Charges file was provided).</li>
+                    <li>Final records after filtering.</li>
                 </ul>
             </section>
 

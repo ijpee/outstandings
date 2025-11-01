@@ -1,0 +1,5 @@
+Charged Headers:
+Identifier	Payer_Name_Cached	zc_Level_LiveGrid	zc_Tutor_LiveGrid	House_Cached	zc_LeftDate	zc_Title_Overide	Title_Cached	Date_Added	zc_Amount_Total	zc_Amount_GST	zc_Amount_Owing	zc_Amount_Owing_GST	Payment_Date	Amount_Paid	RollOver_Student	zc_Pays_DD_or_AP	Account_Cached	Department_Cached	Notes
+
+Charges Headers:
+Account	Department	Amount_Donation	Amount_GST_Yes	Amount_GST_No	Charge_Criteria	Charge_Types	Charge_Value	Code	Set	RollOver_Fee	RollOver_Student	Title	TTGrid	Type	zc_Amount_GST	zc_Amount_GST_Excl	zc_Amount_Total	zc_Sum_Amount_Total	zc_Sum_Amount_Paid	zc_Sum_Amount_Owing	Notes	zc_Count_Payees

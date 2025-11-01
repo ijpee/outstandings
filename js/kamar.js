@@ -8,6 +8,10 @@ const state = {
         processed: [],
         removed: []
     },
+    charges: {
+        raw: [],
+        map: {}
+    },
     seedRoll: {
         ids: [],
         idMap: {}
@@ -31,7 +35,13 @@ const state = {
             excluded: 0,
             filtered: 0
         },
-        final: 0
+        final: 0,
+        payableSources: {
+            fromCharges: 0,
+            fromCharged: 0,
+            chargesOnly: 0,
+            totalUnique: 0
+        }
     }
 };
 
@@ -125,13 +135,24 @@ const SeedRollParser = {
         
         matches.forEach(student => {
             const fullId = (student.student_id_ext || '').trim();
-            if (fullId && fullId.includes('.') && !seen.has(fullId)) {
-                seen.add(fullId);
-                ids.push(fullId);
-                
-                const baseId = fullId.split('.')[0];
-                idMap[baseId] = fullId;
-            }
+            
+            // Skip if empty or doesn't contain a dot
+            if (!fullId || !fullId.includes('.')) return;
+            
+            // Skip extension URLs or other non-student-ID formats
+            if (fullId.includes('://') || fullId.includes('moz-extension')) return;
+            
+            // Skip if already seen
+            if (seen.has(fullId)) return;
+            
+            // Validate it looks like a student ID (numbers and dots only)
+            if (!/^\d+\.\d+$/.test(fullId)) return;
+            
+            seen.add(fullId);
+            ids.push(fullId);
+            
+            const baseId = fullId.split('.')[0];
+            idMap[baseId] = fullId;
         });
         
         console.log(`Parsed ${ids.length} student IDs from JSON seed roll`);
@@ -171,6 +192,94 @@ const SeedRollParser = {
         console.log(`Parsed ${ids.length} student IDs from TSV seed roll`);
         
         return { ids, idMap };
+    }
+};
+
+// ============================================================================
+// CHARGES PARSER
+// ============================================================================
+
+// KAMAR charges export is headerless; we normalize by prepending these headers
+const CHARGES_HEADERS = [
+    "Account","Department","Amount_Donation","Amount_GST_Yes","Amount_GST_No",
+    "Charge_Criteria","Charge_Types","Charge_Value","Code","Set",
+    "RollOver_Fee","RollOver_Student","Title","TTGrid","Type",
+    "zc_Amount_GST","zc_Amount_GST_Excl","zc_Amount_Total",
+    "zc_Sum_Amount_Total","zc_Sum_Amount_Paid","zc_Sum_Amount_Owing",
+    "Notes","zc_Count_Payees"
+];
+
+const ChargesParser = {
+    parse(fileContent) {
+        // Use the existing CSVParser for proper CSV handling
+        const rows = CSVParser.parse(fileContent);
+
+        if (!rows || rows.length === 0) {
+            console.log('Charges file appears empty');
+            return [];
+        }
+
+        // Normalize: prepend headers if missing
+        const first = (rows[0] || []).map(v => String(v || '').trim());
+        const looksLikeHeader = first.includes('Account') && first.includes('Department') && (first.includes('Title') || first.includes('TTGrid'));
+        const startIdx = looksLikeHeader ? 1 : 0;
+
+        // Fixed positional indices (headerless CSVs)
+        // 0: Account
+        // 1: Department
+        // 2: Amount_Donation
+        // 3: Amount_GST_Yes
+        // 4: Amount_GST_No
+        // 12: Title
+        // 13: TTGrid (e.g., "2025TT")
+        // 15: zc_Amount_GST
+        // 17: zc_Amount_Total
+        const IDX = {
+            Account: 0,
+            Department: 1,
+            Amount_Donation: 2,
+            Amount_GST_Yes: 3,
+            Amount_GST_No: 4,
+            Title: 12,
+            TTGrid: 13,
+            zc_Amount_GST: 15,
+            zc_Amount_Total: 17
+        };
+
+        const data = [];
+
+        for (let i = startIdx; i < rows.length; i++) {
+            const values = rows[i] || [];
+            // Skip completely empty lines
+            const isEmpty = values.every(v => (v === undefined || v === null || String(v).trim() === ''));
+            if (isEmpty) continue;
+
+            const safe = idx => (idx >= 0 && idx < values.length) ? (values[idx] || '').trim() : '';
+
+            const row = {
+                Account: safe(IDX.Account),
+                Department: safe(IDX.Department),
+                Amount_Donation: safe(IDX.Amount_Donation),
+                Amount_GST_Yes: safe(IDX.Amount_GST_Yes),
+                Amount_GST_No: safe(IDX.Amount_GST_No),
+                Title: safe(IDX.Title),
+                TTGrid: safe(IDX.TTGrid),
+                zc_Amount_GST: safe(IDX.zc_Amount_GST),
+                zc_Amount_Total: safe(IDX.zc_Amount_Total)
+            };
+
+            // Only include rows with at least a Title or TTGrid; others are likely junk
+            if (row.Title || row.TTGrid) {
+                data.push(row);
+            }
+        }
+
+        console.log(`Parsed ${data.length} charges from CSV (headerless positional parsing${looksLikeHeader ? ' with header skipped' : ''})`);
+        if (data.length > 0) {
+            console.log('Sample charge row:', data[0]);
+        }
+
+        return data;
     }
 };
 
@@ -452,6 +561,13 @@ const PayableNameGenerator = {
         let match = dateAdded.match(/(\d{4})$/);
         if (!match) match = dateAdded.match(/^(\d{4})/);
         return match ? match[1] : "";
+    },
+
+    extractYearFromTTGrid(ttgrid) {
+        // Extract year from TTGrid format (e.g., "2025TT" -> "2025")
+        if (!ttgrid || typeof ttgrid !== 'string') return "";
+        const match = ttgrid.match(/^(\d{4})/);
+        return match ? match[1] : "";
     }
 };
 
@@ -460,32 +576,93 @@ const PayableNameGenerator = {
 // ============================================================================
 
 const FileGenerator = {
-    generatePayables(data) {
+    generatePayables(data, chargesMap = {}) {
         if (!Array.isArray(data) || data.length < 2) return [];
         
-        const headers = ["product_name", "product_remarks2", "product_gst_status", 
-                        "product_is_donation", "product_ledgercode_or_remarks1", "product_price_in_dollars", "is_voluntary"];
+    const headers = ["product_name", "product_remarks2", "product_gst_status", 
+            "product_is_donation", "product_ledgercode_or_remarks1", "product_price_in_dollars", "is_voluntary"];
         const colIdx = {};
         data[0].forEach((h, i) => { colIdx[h] = i; });
         
+        // Build donation set directly from the raw charges CSV (non-blank Amount_Donation)
+        const donationByProduct = new Set();
+        if (state.charges && state.charges.raw && state.charges.raw.length > 1) {
+            const rows = state.charges.raw;
+            const headerRow = rows[0] || [];
+            const norm = s => String(s || '').trim().toLowerCase();
+            const hmap = {};
+            headerRow.forEach((h, i) => { hmap[norm(h)] = i; });
+
+            // Prefer header indices, fallback to positional indices
+            const idxTitle = (hmap['title'] !== undefined) ? hmap['title'] : 12;
+            const idxTTGrid = (hmap['ttgrid'] !== undefined) ? hmap['ttgrid'] : 13;
+            const idxDonation = (hmap['amount_donation'] !== undefined) ? hmap['amount_donation'] : 2;
+
+            for (let i = 1; i < rows.length; i++) {
+                const r = rows[i] || [];
+                const title = String(r[idxTitle] || '').trim();
+                const ttgrid = String(r[idxTTGrid] || '').trim();
+                const donationRaw = String(r[idxDonation] || '').trim();
+                if (!title || !ttgrid) continue;
+                const year = PayableNameGenerator.extractYearFromTTGrid(ttgrid);
+                if (!year) continue;
+                if (donationRaw === '') continue; // only non-blank counts as donation
+                const productName = PayableNameGenerator.generate(title, `01/01/${year}`);
+                if (productName) donationByProduct.add(productName);
+            }
+        }
+        
         const seen = new Set();
         const rows = [];
+        let fromCharges = 0;
+        let fromCharged = 0;
         
+        // STEP 1: Create ALL payables from charges file first
+        if (Object.keys(chargesMap).length > 0) {
+            for (const [lookupKey, chargeData] of Object.entries(chargesMap)) {
+                const productName = chargeData.payable_name;
+                
+                if (seen.has(productName)) continue;
+                seen.add(productName);
+                
+                const gstAmount = chargeData.zc_Amount_GST || "";
+                const productGstStatus = (gstAmount && !isNaN(Number(gstAmount)) && Number(gstAmount) > 0) ? "GST" : "GST exempt";
+
+                // Donation from charges: non-blank Amount_Donation in raw charges for this product
+                const productIsDonation = donationByProduct.has(productName) ? "TRUE" : "FALSE";
+
+                const isVoluntary = productIsDonation === "TRUE" ? "yes" : "no";
+                
+                const ledger = chargeData.Account || "";
+                let productLedgerCode = ledger ? `~LDC_${ledger}` : "";
+                if (productLedgerCode.includes("/")) {
+                    productLedgerCode = productLedgerCode.split("/")[0];
+                }
+                
+                const productPrice = chargeData.zc_Amount_Total || "";
+                
+                rows.push([productName, "", productGstStatus, productIsDonation, productLedgerCode, productPrice, isVoluntary]);
+                fromCharges++;
+            }
+        }
+        
+        // STEP 2: Add any additional payables from charged file (not in charges)
         for (const row of data.slice(1)) {
             const title = row[colIdx["Title_Cached"]] || "";
             const dateAdded = row[colIdx["Date_Added"]];
             const productName = PayableNameGenerator.generate(title, dateAdded);
             
+            // Skip if already created from charges
             if (seen.has(productName)) continue;
             seen.add(productName);
             
+            // Use old method (from charged file)
             const gstVal = row[colIdx["zc_Amount_Owing_GST"]];
             const productGstStatus = (gstVal && !isNaN(Number(gstVal)) && String(gstVal).trim() !== "") ? "GST" : "GST exempt";
             
             const nameLower = String(productName).toLowerCase();
             const productIsDonation = (nameLower.includes("donation") || nameLower.includes("contribution")) ? "TRUE" : "FALSE";
             
-            // is_voluntary is "yes" if it's a donation, "no" otherwise
             const isVoluntary = productIsDonation === "TRUE" ? "yes" : "no";
             
             const ledger = row[colIdx["Account_Cached"]] || "";
@@ -497,12 +674,17 @@ const FileGenerator = {
             const productPrice = row[colIdx["zc_Amount_Total"]] || "";
             
             rows.push([productName, "", productGstStatus, productIsDonation, productLedgerCode, productPrice, isVoluntary]);
+            fromCharged++;
         }
+        
+        // Update stats
+        state.stats.payableSources.fromCharges = fromCharges;
+        state.stats.payableSources.fromCharged = fromCharged;
         
         return [headers, ...rows];
     },
 
-    generatePcats(data) {
+    generatePcats(data, chargesMap = {}) {
         if (!Array.isArray(data) || data.length < 2) return [];
         
         const headers = ["proto_payable_name", "pcat"];
@@ -514,13 +696,33 @@ const FileGenerator = {
         
         for (const row of data.slice(1)) {
             const protoPayableName = row[colIdx["payable_name"]] || "";
-            const pcat = row[colIdx["Department_Cached"]] || "";
+            const title = row[colIdx["Title_Cached"]] || "";
+            const dateAdded = row[colIdx["Date_Added"]];
+            const year = PayableNameGenerator.extractYear(dateAdded);
+            
+            // Check if we have charges data for this payable
+            const lookupKey = `${title}|${year}`;
+            const chargeData = chargesMap[lookupKey];
+            
+            const pcat = chargeData ? (chargeData.Department || "") : (row[colIdx["Department_Cached"]] || "");
             const key = protoPayableName + "||" + pcat;
             
             if (seen.has(key)) continue;
             seen.add(key);
             
             rows.push([protoPayableName, pcat]);
+        }
+
+        // Ensure products that exist only in charges are included
+        if (chargesMap && Object.keys(chargesMap).length > 0) {
+            for (const entry of Object.values(chargesMap)) {
+                const protoPayableName = entry.payable_name || "";
+                const pcat = entry.Department || "";
+                const key = protoPayableName + "||" + pcat;
+                if (!protoPayableName || seen.has(key)) continue;
+                seen.add(key);
+                rows.push([protoPayableName, pcat]);
+            }
         }
         
         return [headers, ...rows];
@@ -618,10 +820,25 @@ const UI = {
         if (stats.removed.excluded > 0) html += `<div>Removed (already uploaded): ${stats.removed.excluded}</div>`;
         if (stats.removed.filtered > 0) html += `<div>Removed (filtered by name): ${stats.removed.filtered}</div>`;
         
+    // Total removed across all categories
+    const totalRemoved = Object.values(stats.removed || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    html += `<div><strong>Total removed: ${totalRemoved}</strong></div>`;
+        
+        // Show concise payables summary only
+        const ps = stats.payableSources || {};
+        const totalUnique = ps.totalUnique || (ps.fromCharges + ps.fromCharged);
+        if (totalUnique > 0) {
+            html += `<div style=\"margin-top: 10px;\"><strong>Payables:</strong></div>`;
+            html += `<div>Total payables: ${totalUnique}</div>`;
+            html += `<div>Extra from charges: ${ps.chargesOnly || 0}</div>`;
+        }
+        
         html += `<div style="margin-top: 10px;"><strong>Final records: ${stats.final}</strong></div>`;
         
         container.innerHTML = html;
     },
+
+    // Removed renderUnmatchedCharges: we now report only unique payable counts
 
     renderPreview(data) {
         const preview = document.getElementById('preview');
@@ -725,7 +942,13 @@ const Processor = {
                 excluded: 0,
                 filtered: 0
             },
-            final: 0
+            final: 0,
+            payableSources: {
+                fromCharges: 0,
+                fromCharged: 0,
+                chargesOnly: 0,
+                totalUnique: 0
+            }
         };
         state.csv.removed = [];
         
@@ -780,13 +1003,55 @@ const Processor = {
         // Add payable name column
         data = DataTransformer.addPayableNameColumn(data);
         
+        // Compute unique payable counts (charges-first precedence, then charged fallback)
+        (function computePayableCounts() {
+            try {
+                const chargesNames = new Set();
+                if (state.charges && state.charges.map) {
+                    for (const k of Object.keys(state.charges.map)) {
+                        const nm = state.charges.map[k]?.payable_name || '';
+                        if (nm) chargesNames.add(nm);
+                    }
+                }
+
+                const chargedNames = new Set();
+                const headers = data[0];
+                const titleIdx = headers.indexOf("Title_Cached");
+                const dateIdx = headers.indexOf("Date_Added");
+                for (let i = 1; i < data.length; i++) {
+                    const row = data[i];
+                    const nm = PayableNameGenerator.generate(row[titleIdx] || "", row[dateIdx] || "");
+                    if (nm) chargedNames.add(nm);
+                }
+
+                let overlap = 0;
+                chargesNames.forEach(n => { if (chargedNames.has(n)) overlap++; });
+
+                const fromCharges = chargesNames.size; // unique in charges
+                const chargesOnly = fromCharges - overlap; // new due to charges
+                const chargedOnly = chargedNames.size - overlap; // additional from charged only
+                const totalUnique = fromCharges + chargedOnly; // union size
+
+                state.stats.payableSources = {
+                    fromCharges,
+                    fromCharged: chargedOnly,
+                    chargesOnly,
+                    totalUnique
+                };
+            } catch (err) {
+                console.warn('Failed to compute payable counts:', err);
+            }
+        })();
+
+        // We intentionally do not compute row-level matching stats anymore.
+        
         state.stats.final = data.length - 1;
         state.csv.processed = data;
         
         // Show results
         UI.showStatus('Processing complete!', 'success');
         UI.renderStats();
-        UI.renderPreview(data);
+    UI.renderPreview(data);
         // Detect duplicates in outstandings (same student_id and payable_name)
         state.csv.duplicates = [];
         if (data.length > 1) {
@@ -846,6 +1111,13 @@ const Processor = {
 
 const EventHandlers = {
     init() {
+        // Charges file upload
+        document.getElementById('chargesInputBtn').addEventListener('click', () => {
+            document.getElementById('chargesInput').click();
+        });
+        
+        document.getElementById('chargesInput').addEventListener('change', this.handleChargesUpload);
+        
         // CSV file upload
         document.getElementById('csvInputBtn').addEventListener('click', () => {
             document.getElementById('csvInput').click();
@@ -899,6 +1171,120 @@ const EventHandlers = {
         
         // Collapsible filters
         document.getElementById('filtersToggle').addEventListener('click', this.toggleFilters);
+    },
+
+    handleChargesUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        if (!file.name.toLowerCase().endsWith('.csv')) {
+            UI.showStatus('Please select a CSV file.', 'error');
+            return;
+        }
+        
+        UI.updateFileStatus('chargesFileName', file.name);
+        
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            // Parse raw rows
+            let rows = CSVParser.parse(e.target.result) || [];
+            if (rows.length === 0) {
+                UI.showStatus('Charges file appears empty or invalid.', 'error');
+                return;
+            }
+
+            // Ensure a header row exists (prepend if the file is headerless)
+            const first = (rows[0] || []).map(v => String(v || '').trim());
+            const looksLikeHeader = first.includes('Account') && first.includes('Department') && (first.includes('Title') || first.includes('TTGrid'));
+            if (!looksLikeHeader) {
+                rows = [CHARGES_HEADERS, ...rows];
+            }
+
+            // Persist raw charges with headers (for consistency with charged)
+            state.charges.raw = rows;
+
+            // Build lookup map: Title|Year -> charge data
+            const headers = rows[0];
+            const col = {};
+            headers.forEach((h, i) => { col[h] = i; });
+            const get = (row, name) => {
+                const i = col[name];
+                return (i === undefined || i === null) ? '' : String(row[i] || '').trim();
+            };
+
+            state.charges.map = {};
+
+            for (const row of rows.slice(1)) {
+                if (!row || row.every(v => String(v || '').trim() === '')) continue;
+
+                const title = get(row, 'Title');
+                const ttgrid = get(row, 'TTGrid');
+                const year = PayableNameGenerator.extractYearFromTTGrid(ttgrid);
+                if (!title || !year) continue;
+
+                const key = `${title}|${year}`;
+                const fakeDateForYear = `01/01/${year}`;
+                const payableName = PayableNameGenerator.generate(title, fakeDateForYear);
+
+                // Initialize or fetch existing aggregated entry
+                const existing = state.charges.map[key] || {
+                    Account: '',
+                    Department: '',
+                    Amount_Donation: '',
+                    Amount_GST_Yes: '',
+                    Amount_GST_No: '',
+                    Title: title,
+                    TTGrid: ttgrid,
+                    zc_Amount_GST: '',
+                    zc_Amount_Total: '',
+                    payable_name: payableName,
+                    year,
+                    donation_present: false
+                };
+
+                // Prefer first non-empty values for reference fields
+                const acct = get(row, 'Account');
+                const dept = get(row, 'Department');
+                const gstY = get(row, 'Amount_GST_Yes');
+                const gstN = get(row, 'Amount_GST_No');
+                const amtGst = get(row, 'zc_Amount_GST');
+                const amtTotalRaw = get(row, 'zc_Amount_Total');
+                // Normalize total: if blank or <= 0, use "1"
+                const amtTotal = (() => {
+                    const s = String(amtTotalRaw || '').trim();
+                    if (!s) return "1";
+                    const num = parseFloat(s.replace(/[^0-9.-]/g, ''));
+                    if (isNaN(num) || num <= 0) return "1";
+                    return s;
+                })();
+                const amtDonation = get(row, 'Amount_Donation');
+
+                if (!existing.Account && acct) existing.Account = acct;
+                if (!existing.Department && dept) existing.Department = dept;
+                if (!existing.Amount_GST_Yes && gstY) existing.Amount_GST_Yes = gstY;
+                if (!existing.Amount_GST_No && gstN) existing.Amount_GST_No = gstN;
+                if (!existing.zc_Amount_GST && amtGst) existing.zc_Amount_GST = amtGst;
+                // Prefer a positive amount; if existing is "1" (fallback), upgrade when a positive amount appears later
+                if (!existing.zc_Amount_Total) {
+                    existing.zc_Amount_Total = amtTotal;
+                } else if (existing.zc_Amount_Total === "1" && amtTotal !== "1") {
+                    existing.zc_Amount_Total = amtTotal;
+                }
+
+                // Aggregate donation presence across all rows for this key
+                if (amtDonation && String(amtDonation).trim() !== '') {
+                    existing.donation_present = true;
+                }
+
+                // Ensure payable_name remains consistent (first computed)
+                state.charges.map[key] = existing;
+            }
+
+            console.log(`Built charges lookup map with ${Object.keys(state.charges.map).length} unique keys`);
+            UI.showStatus(`Charges file loaded successfully (${rows.length - 1} rows).`, 'success');
+        };
+        
+        reader.readAsText(file);
     },
 
     handleCSVUpload(event) {
@@ -991,12 +1377,12 @@ const EventHandlers = {
     },
 
     downloadPayables() {
-        const data = FileGenerator.generatePayables(state.csv.processed);
+        const data = FileGenerator.generatePayables(state.csv.processed, state.charges.map);
         DownloadController.download(data, 'payables.csv');
     },
 
     downloadPcats() {
-        const data = FileGenerator.generatePcats(state.csv.processed);
+        const data = FileGenerator.generatePcats(state.csv.processed, state.charges.map);
         DownloadController.download(data, 'pcats.csv');
     },
 
@@ -1027,12 +1413,25 @@ const EventHandlers = {
         
         // Reset state
         state.csv = { raw: [], processed: [], removed: [] };
+        state.charges = { raw: [], map: {} };
         state.seedRoll = { ids: [], idMap: {} };
         state.exclude = { ids: [] };
         state.config = { schoolName: '', moeFallback: '' };
-        state.stats = { original: 0, removed: {}, final: 0 };
+        state.stats = { 
+            original: 0, 
+            removed: {}, 
+            final: 0,
+            payableSources: { 
+                fromCharges: 0, 
+                fromCharged: 0,
+                chargesOnly: 0,
+                totalUnique: 0
+            }
+        };
         
         // Reset UI
+        document.getElementById('chargesInput').value = '';
+        document.getElementById('chargesFileName').textContent = '';
         document.getElementById('csvInput').value = '';
         document.getElementById('fileName').textContent = '';
         document.getElementById('seedRollPaste').value = '';
