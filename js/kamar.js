@@ -27,11 +27,7 @@ const state = {
         original: 0,
         removed: {
             zeroOwing: 0,
-            pastLeftDate: 0,
-            staff: 0,
-            preEnrol: 0,
-            invalidId: 0,
-            seedRoll: 0,
+            notOnSeedRoll: 0,
             excluded: 0,
             filtered: 0
         },
@@ -106,6 +102,53 @@ const CSVParser = {
                     : escaped;
             }).join(',');
         }).join('\n');
+    },
+
+    parseTSV(tsvText) {
+        const rows = [];
+        let row = [];
+        let cell = '';
+        let inQuotes = false;
+        let i = 0;
+        const text = tsvText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        
+        while (i < text.length) {
+            const char = text[i];
+            if (inQuotes) {
+                if (char === '"') {
+                    if (text[i + 1] === '"') {
+                        cell += '"';
+                        i++;
+                    } else {
+                        inQuotes = false;
+                    }
+                } else {
+                    cell += char;
+                }
+            } else {
+                if (char === '"') {
+                    inQuotes = true;
+                } else if (char === '\t') {
+                    row.push(cell);
+                    cell = '';
+                } else if (char === '\n') {
+                    row.push(cell);
+                    rows.push(row);
+                    row = [];
+                    cell = '';
+                } else {
+                    cell += char;
+                }
+            }
+            i++;
+        }
+        
+        if (cell.length > 0 || row.length > 0) {
+            row.push(cell);
+            rows.push(row);
+        }
+        
+        return rows;
     }
 };
 
@@ -327,7 +370,8 @@ const DataTransformer = {
             const val = row[owingIdx];
             const isValid = val && String(val).trim() !== '' && String(Number(val).toFixed(2)) !== '0.00';
             if (!isValid) {
-                removed.push(this.createRemovedRecord(row, headers, 'Zero/blank owing amount'));
+                // Count but don't track in removed CSV (this is data cleanup, not a removal)
+                removed.push(row);
             }
             return isValid;
         });
@@ -335,68 +379,61 @@ const DataTransformer = {
         return { data: [headers, ...filtered], removed };
     },
 
-    filterPastLeftDate(data) {
+    filterBySeedRollWithReasons(data, seedRollIds) {
+        if (!seedRollIds || seedRollIds.length === 0) {
+            // If no seed roll, return all data (should not happen as we make it mandatory)
+            return { data, removed: [] };
+        }
+        
         const headers = data[0];
+        const idIdx = headers.indexOf("student_id");
+        const tutorIdx = headers.indexOf("zc_Tutor_LiveGrid");
         const leftDateIdx = headers.indexOf("zc_LeftDate");
+        const seedSet = new Set(seedRollIds.map(id => id.trim()));
         const removed = [];
         const today = new Date();
         today.setHours(0,0,0,0);
         
         const filtered = data.slice(1).filter(row => {
-            const dateStr = row[leftDateIdx];
-            if (!dateStr || String(dateStr).trim() === '') return true;
+            const studentId = (row[idIdx] || '').trim();
             
-            const leftDate = this.parseDate(dateStr);
-            if (leftDate && leftDate <= today) {
-                removed.push(this.createRemovedRecord(row, headers, 'Past left date'));
-                return false;
+            // ON SEED ROLL = KEEP (only thing that matters for eligibility)
+            if (seedSet.has(studentId)) {
+                return true;
             }
-            return true;
-        });
-        
-        return { data: [headers, ...filtered], removed };
-    },
-
-    filterStaffAndPreEnrol(data) {
-        const headers = data[0];
-        const tutorIdx = headers.indexOf("zc_Tutor_LiveGrid");
-        const removed = [];
-        
-        const filtered = data.slice(1).filter(row => {
+            
+            // NOT ON SEED ROLL = REMOVE
+            // Now determine WHY (for reporting purposes only - these are just labels)
             const tutor = (row[tutorIdx] || '').toLowerCase();
+            const leftDateStr = row[leftDateIdx];
+            let reason = 'Not on seed roll';
+            let details = [];
+            
+            // Check possible reasons (don't rely on these for filtering!)
+            if (tutor.includes('pre-enrol') || tutor.includes('preenrol') ||
+                (tutor.includes('enrol') && !tutor.includes('enrollment'))) {
+                details.push('appears to be pre-enrollment');
+            }
             
             if (tutor.includes('staff') || tutor.includes('admin') || 
                 tutor.includes('teacher') || tutor.includes('employee')) {
-                removed.push(this.createRemovedRecord(row, headers, 'Staff/Admin'));
-                return false;
+                details.push('appears to be staff/admin');
             }
             
-            if (tutor.includes('pre-enrol') || tutor.includes('preenrol') ||
-                (tutor.includes('enrol') && !tutor.includes('enrollment'))) {
-                removed.push(this.createRemovedRecord(row, headers, 'Pre-enrollment'));
-                return false;
+            if (leftDateStr && String(leftDateStr).trim() !== '') {
+                const leftDate = this.parseDate(leftDateStr);
+                if (leftDate && leftDate <= today) {
+                    details.push('past left date');
+                }
             }
             
-            return true;
-        });
-        
-        return { data: [headers, ...filtered], removed };
-    },
-
-    filterInvalidIds(data) {
-        const headers = data[0];
-        const idIdx = headers.indexOf("student_id");
-        const removed = [];
-        
-        const filtered = data.slice(1).filter(row => {
-            const idStr = (row[idIdx] || '').toString().trim();
-            const validId = /^\d+$/.test(idStr) || /^\d+\.\d{4}$/.test(idStr);
-            
-            if (idStr && !validId) {
-                removed.push(this.createRemovedRecord(row, headers, 'Invalid student ID'));
-                return false;
+            // If we found any details, add them to the reason
+            if (details.length > 0) {
+                reason = `Not on seed roll (${details.join(', ')})`;
             }
-            return true;
+            
+            removed.push(this.createRemovedRecord(row, headers, reason));
+            return false;
         });
         
         return { data: [headers, ...filtered], removed };
@@ -423,26 +460,7 @@ const DataTransformer = {
         return data;
     },
 
-    filterBySeedRoll(data, seedRollIds) {
-        if (!seedRollIds || seedRollIds.length === 0) return { data, removed: [] };
-        
-        const headers = data[0];
-        const idIdx = headers.indexOf("student_id");
-        const seedSet = new Set(seedRollIds.map(id => id.trim()));
-        const removed = [];
-        
-        const filtered = data.slice(1).filter(row => {
-            const studentId = (row[idIdx] || '').trim();
-            if (seedSet.has(studentId)) {
-                return true;
-            } else {
-                removed.push(this.createRemovedRecord(row, headers, 'Not in current seed roll'));
-                return false;
-            }
-        });
-        
-        return { data: [headers, ...filtered], removed };
-    },
+
 
     filterExcluded(data, excludeIds) {
         if (!excludeIds || excludeIds.length === 0) return { data, removed: [] };
@@ -811,17 +829,13 @@ const UI = {
         let html = '<strong>Processing Summary:</strong>';
         html += `<div>Original records: ${stats.original}</div>`;
         
-        if (stats.removed.zeroOwing > 0) html += `<div>Removed (zero owing): ${stats.removed.zeroOwing}</div>`;
-        if (stats.removed.pastLeftDate > 0) html += `<div>Removed (past left date): ${stats.removed.pastLeftDate}</div>`;
-        if (stats.removed.staff > 0) html += `<div>Removed (staff/admin): ${stats.removed.staff}</div>`;
-        if (stats.removed.preEnrol > 0) html += `<div>Removed (pre-enrollment): ${stats.removed.preEnrol}</div>`;
-        if (stats.removed.invalidId > 0) html += `<div>Removed (invalid ID): ${stats.removed.invalidId}</div>`;
-        if (stats.removed.seedRoll > 0) html += `<div>Removed (not in seed roll): ${stats.removed.seedRoll}</div>`;
+        if (stats.removed.zeroOwing > 0) html += `<div>Filtered (zero owing): ${stats.removed.zeroOwing}</div>`;
+        if (stats.removed.notOnSeedRoll > 0) html += `<div>Removed (not on seed roll): ${stats.removed.notOnSeedRoll}</div>`;
         if (stats.removed.excluded > 0) html += `<div>Removed (already uploaded): ${stats.removed.excluded}</div>`;
         if (stats.removed.filtered > 0) html += `<div>Removed (filtered by name): ${stats.removed.filtered}</div>`;
         
-    // Total removed across all categories
-    const totalRemoved = Object.values(stats.removed || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    // Total removed (excluding zero owing which is just filtering)
+    const totalRemoved = (stats.removed.notOnSeedRoll || 0) + (stats.removed.excluded || 0) + (stats.removed.filtered || 0);
     html += `<div><strong>Total removed: ${totalRemoved}</strong></div>`;
         
         // Show concise payables summary only
@@ -919,9 +933,7 @@ const Processor = {
         // Warn if no seed roll
         if (state.seedRoll.ids.length === 0) {
             if (!confirm('WARNING: No seed roll loaded.\n\n' +
-                'Without the seed roll:\n' +
-                '• Student IDs may have incorrect MOE numbers\n' +
-                '• Former students may not be filtered out\n\n' +
+                'Without the seed roll, this won\'t work correctly.\n\n' +
                 'Continue anyway?')) {
                 return;
             }
@@ -934,11 +946,7 @@ const Processor = {
             original: 0,
             removed: {
                 zeroOwing: 0,
-                pastLeftDate: 0,
-                staff: 0,
-                preEnrol: 0,
-                invalidId: 0,
-                seedRoll: 0,
+                notOnSeedRoll: 0,
                 excluded: 0,
                 filtered: 0
             },
@@ -960,41 +968,23 @@ const Processor = {
         data = DataTransformer.removeColumns(data);
         state.stats.original = data.length - 1;
         
-        // Filter zero owing
+        // Filter zero owing (legitimate - no debt = nothing to upload)
         result = DataTransformer.filterZeroOwing(data);
         data = result.data;
         state.stats.removed.zeroOwing = result.removed.length;
-        state.csv.removed.push(...result.removed);
+        // NOTE: Zero owing records are NOT added to state.csv.removed (data cleanup, not a removal)
         
-        // Filter past left date
-        result = DataTransformer.filterPastLeftDate(data);
-        data = result.data;
-        state.stats.removed.pastLeftDate = result.removed.length;
-        state.csv.removed.push(...result.removed);
-        
-        // Filter staff and pre-enrol
-        result = DataTransformer.filterStaffAndPreEnrol(data);
-        data = result.data;
-        state.stats.removed.staff = result.removed.filter(r => r.reason === 'Staff/Admin').length;
-        state.stats.removed.preEnrol = result.removed.filter(r => r.reason === 'Pre-enrollment').length;
-        state.csv.removed.push(...result.removed);
-        
-        // Filter invalid IDs
-        result = DataTransformer.filterInvalidIds(data);
-        data = result.data;
-        state.stats.removed.invalidId = result.removed.length;
-        state.csv.removed.push(...result.removed);
-        
-        // Append MOE
+        // Append MOE numbers BEFORE filtering by seed roll (gives best chance of matching)
         data = DataTransformer.appendMOE(data, state.seedRoll.idMap, state.config.moeFallback);
         
-        // Filter by seed roll
-        result = DataTransformer.filterBySeedRoll(data, state.seedRoll.ids);
+        // THE ONLY REAL ELIGIBILITY FILTER - Seed roll check with removal reasons
+        // Everything else is just labeling why they weren't on it
+        result = DataTransformer.filterBySeedRollWithReasons(data, state.seedRoll.ids);
         data = result.data;
-        state.stats.removed.seedRoll = result.removed.length;
+        state.stats.removed.notOnSeedRoll = result.removed.length;
         state.csv.removed.push(...result.removed);
         
-        // Filter excluded students
+        // Filter excluded students (already uploaded to Kindo)
         result = DataTransformer.filterExcluded(data, state.exclude.ids);
         data = result.data;
         state.stats.removed.excluded = result.removed.length;
@@ -1177,8 +1167,9 @@ const EventHandlers = {
         const file = event.target.files[0];
         if (!file) return;
         
-        if (!file.name.toLowerCase().endsWith('.csv')) {
-            UI.showStatus('Please select a CSV file.', 'error');
+        const ext = file.name.toLowerCase().split('.').pop();
+        if (!['csv', 'tab', 'tsv'].includes(ext)) {
+            UI.showStatus('Please select a CSV, TAB, or TSV file.', 'error');
             return;
         }
         
@@ -1186,8 +1177,13 @@ const EventHandlers = {
         
         const reader = new FileReader();
         reader.onload = function(e) {
-            // Parse raw rows
-            let rows = CSVParser.parse(e.target.result) || [];
+            // Parse raw rows based on file extension
+            let rows;
+            if (ext === 'csv') {
+                rows = CSVParser.parse(e.target.result) || [];
+            } else if (ext === 'tab' || ext === 'tsv') {
+                rows = CSVParser.parseTSV(e.target.result) || [];
+            }
             if (rows.length === 0) {
                 UI.showStatus('Charges file appears empty or invalid.', 'error');
                 return;
@@ -1288,9 +1284,12 @@ const EventHandlers = {
     },
 
     handleCSVUpload(event) {
-        const files = Array.from(event.target.files).filter(f => f.name.toLowerCase().endsWith('.csv'));
+        const files = Array.from(event.target.files).filter(f => {
+            const ext = f.name.toLowerCase().split('.').pop();
+            return ['csv', 'tab', 'tsv'].includes(ext);
+        });
         if (files.length === 0) {
-            UI.showStatus('Please select at least one CSV file.', 'error');
+            UI.showStatus('Please select at least one CSV, TAB, or TSV file.', 'error');
             return;
         }
         
@@ -1302,8 +1301,14 @@ const EventHandlers = {
         files.forEach(file => {
             const reader = new FileReader();
             reader.onload = function(e) {
-                const rows = CSVParser.parse(e.target.result);
-                if (rows.length > 0) allRows = allRows.concat(rows);
+                const ext = file.name.toLowerCase().split('.').pop();
+                let rows;
+                if (ext === 'csv') {
+                    rows = CSVParser.parse(e.target.result);
+                } else if (ext === 'tab' || ext === 'tsv') {
+                    rows = CSVParser.parseTSV(e.target.result);
+                }
+                if (rows && rows.length > 0) allRows = allRows.concat(rows);
                 
                 loaded++;
                 if (loaded === files.length) {
