@@ -32,7 +32,7 @@ const EDGE_DONATION_KEYWORDS = ['donation', 'koha', 'charitable', 'giving', 'fun
 const EDGE_DEFAULTS = {
     GST_STATUS: 'GST',
     CATEGORY: 'General',
-    LEDGER_CODE: '~LDC_Default'
+    LEDGER_CODE: '~LDC_General'
 };
 
 // Initialize Edge SMS event listeners
@@ -829,8 +829,45 @@ function displayEdgeResults() {
     // Display removed with potential matches
     displayEdgeRemovedWithMatches();
     
+    // Display Kindo upload commands
+    displayEdgeKindoCommands();
+    
     resultsSection.style.display = 'block';
     resultsSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+function displayEdgeKindoCommands() {
+    const schoolName = document.getElementById('schoolNameInputEdge')?.value || 'school';
+    const schoolSlug = schoolName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    const supplierId = `${schoolSlug}_office`;
+    const schoolId = schoolName;
+    
+    const kindoContainer = document.getElementById('kindoCommandsEdge');
+    if (!kindoContainer) return;
+    
+    const payablesFile = `${schoolSlug}_payables.csv`;
+    const pcatsFile = `${schoolSlug}_pcats.csv`;
+    const outstandingsFile = `${schoolSlug}_outstandings.csv`;
+    
+    kindoContainer.innerHTML = `
+        <div style="margin-top: 24px; padding: 12px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 4px;">
+            <h4 style="margin: 0 0 8px 0; font-size: 14px; color: #666;">KD Upload Commands:</h4>
+            <div style="font-family: monospace; font-size: 12px; line-height: 1.8;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <code style="flex: 1; background: white; padding: 4px 8px; border-radius: 3px;">kp_product_upload_from_incoming_file ${supplierId} ${payablesFile} -preview</code>
+                    <button onclick="navigator.clipboard.writeText('kp_product_upload_from_incoming_file ${supplierId} ${payablesFile} -preview')" style="padding: 4px 8px; font-size: 11px; cursor: pointer;">Copy</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <code style="flex: 1; background: white; padding: 4px 8px; border-radius: 3px;">kp_pcat_setting_from_incoming_file "${schoolId}" ${pcatsFile} -preview</code>
+                    <button onclick="navigator.clipboard.writeText('kp_pcat_setting_from_incoming_file \"${schoolId}\" ${pcatsFile} -preview')" style="padding: 4px 8px; font-size: 11px; cursor: pointer;">Copy</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <code style="flex: 1; background: white; padding: 4px 8px; border-radius: 3px;">kp_load_payables_from_incoming_file ${outstandingsFile} -preview</code>
+                    <button onclick="navigator.clipboard.writeText('kp_load_payables_from_incoming_file ${outstandingsFile} -preview')" style="padding: 4px 8px; font-size: 11px; cursor: pointer;">Copy</button>
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 function displayEdgeRemovedWithMatches() {
@@ -1029,6 +1066,7 @@ function resetEdgeApp() {
     document.getElementById('removeNamesTextareaEdge').value = '';
     document.getElementById('resultsSectionEdge').style.display = 'none';
     document.getElementById('duplicatesContainerEdge').innerHTML = '';
+    document.getElementById('kindoCommandsEdge').innerHTML = '';
     
     // Disable process and download buttons
     document.getElementById('processBtnEdge').disabled = true;
