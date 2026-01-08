@@ -884,7 +884,7 @@ const EventHandlers = {
         document.getElementById('rawBtn').addEventListener('click', this.downloadRaw);
         
         // Reset
-        document.getElementById('resetBtn').addEventListener('click', this.handleReset);
+        document.getElementById('startOverBtn').addEventListener('click', this.handleReset);
         
         // Help
         document.getElementById('helpBtn').addEventListener('click', () => {

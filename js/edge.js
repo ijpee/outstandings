@@ -62,8 +62,8 @@ document.addEventListener('DOMContentLoaded', function() {
     processBtnEdge?.addEventListener('click', processEdgeData);
     
     // Reset button
-    const resetBtnEdge = document.getElementById('resetBtnEdge');
-    resetBtnEdge?.addEventListener('click', resetEdgeApp);
+    const startOverBtnEdge = document.getElementById('startOverBtnEdge');
+    startOverBtnEdge?.addEventListener('click', resetEdgeApp);
     
     // Download buttons
     document.getElementById('payablesBtnEdge')?.addEventListener('click', () => downloadEdgeFile('payables'));
@@ -354,6 +354,16 @@ function processEdgeData() {
             continue;
         }
         
+        // Check if room is "UNKNOWN"
+        const normalizedRoom = row.room.trim().toLowerCase();
+        if (normalizedRoom === 'unknown') {
+            edgeProcessedData.removed.push({
+                ...row,
+                reason: 'Room is UNKNOWN'
+            });
+            continue;
+        }
+        
         // Parse student name (format: "Last Name, First Name")
         const nameParts = row.studentName.split(',').map(s => s.trim());
         if (nameParts.length < 2) {
@@ -397,6 +407,19 @@ function processEdgeData() {
                 row: { ...row, firstName, lastName },
                 candidates: matchResult.candidates,
                 reason: matchResult.reason || 'Multiple matches found'
+            });
+            continue;
+        }
+        
+        // Check if matched student has UNKNOWN room
+        const matchedStudent = edgeSeedRoll.find(s => s.student_id === matchResult.studentId);
+        if (matchedStudent && matchedStudent.class_name.toLowerCase() === 'unknown') {
+            edgeProcessedData.removed.push({
+                ...row,
+                firstName,
+                lastName,
+                student_id: matchResult.studentId,
+                reason: 'Student has UNKNOWN room'
             });
             continue;
         }

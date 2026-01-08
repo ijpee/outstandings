@@ -53,7 +53,16 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    // Initialize with Kamar selected by default
-    showKamarSection();
+    // Initialize with the currently selected SMS system
+    if (smsSelect) {
+        const selectedValue = smsSelect.value;
+        if (selectedValue === 'kamar') {
+            showKamarSection();
+        } else if (selectedValue === 'hero') {
+            showHeroSection();
+        } else if (selectedValue === 'edge') {
+            showEdgeSection();
+        }
+    }
 });
 

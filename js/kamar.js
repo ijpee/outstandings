@@ -379,6 +379,31 @@ const DataTransformer = {
         return { data: [headers, ...filtered], removed };
     },
 
+    filterPastLeftDate(data) {
+        const headers = data[0];
+        const leftDateIdx = headers.indexOf("zc_LeftDate");
+        
+        // If column doesn't exist, return as is
+        if (leftDateIdx === -1) return { data, removed: [] };
+        
+        const removed = [];
+        
+        const filtered = data.slice(1).filter(row => {
+            const val = row[leftDateIdx];
+            
+            // SIMPLIFIED LOGIC: If there is any text in the cell, they have left.
+            // Active students have a blank cell.
+            if (val && String(val).trim() !== '') {
+                const reason = `Student Left - ${String(val).trim()}`;
+                removed.push(this.createRemovedRecord(row, headers, reason));
+                return false;
+            }
+            return true;
+        });
+        
+        return { data: [headers, ...filtered], removed };
+    },
+
     filterBySeedRollWithReasons(data, seedRollIds) {
         if (!seedRollIds || seedRollIds.length === 0) {
             // If no seed roll, return all data (should not happen as we make it mandatory)
@@ -388,11 +413,9 @@ const DataTransformer = {
         const headers = data[0];
         const idIdx = headers.indexOf("student_id");
         const tutorIdx = headers.indexOf("zc_Tutor_LiveGrid");
-        const leftDateIdx = headers.indexOf("zc_LeftDate");
+        // Removed zc_LeftDate usage as it is handled by filterPastLeftDate now
         const seedSet = new Set(seedRollIds.map(id => id.trim()));
         const removed = [];
-        const today = new Date();
-        today.setHours(0,0,0,0);
         
         const filtered = data.slice(1).filter(row => {
             const studentId = (row[idIdx] || '').trim();
@@ -403,33 +426,16 @@ const DataTransformer = {
             }
             
             // NOT ON SEED ROLL = REMOVE
-            // Now determine WHY (for reporting purposes only - these are just labels)
             const tutor = (row[tutorIdx] || '').toLowerCase();
-            const leftDateStr = row[leftDateIdx];
-            let reason = 'Not on seed roll';
-            let details = [];
+            let reason = 'Not on Seed Roll';
             
-            // Check possible reasons (don't rely on these for filtering!)
+            // Check simplified reasons
             if (tutor.includes('pre-enrol') || tutor.includes('preenrol') ||
                 (tutor.includes('enrol') && !tutor.includes('enrollment'))) {
-                details.push('appears to be pre-enrollment');
-            }
-            
-            if (tutor.includes('staff') || tutor.includes('admin') || 
+                reason = 'Pre-Enrol';
+            } else if (tutor.includes('staff') || tutor.includes('admin') || 
                 tutor.includes('teacher') || tutor.includes('employee')) {
-                details.push('appears to be staff/admin');
-            }
-            
-            if (leftDateStr && String(leftDateStr).trim() !== '') {
-                const leftDate = this.parseDate(leftDateStr);
-                if (leftDate && leftDate <= today) {
-                    details.push('past left date');
-                }
-            }
-            
-            // If we found any details, add them to the reason
-            if (details.length > 0) {
-                reason = `Not on seed roll (${details.join(', ')})`;
+                reason = 'Staff';
             }
             
             removed.push(this.createRemovedRecord(row, headers, reason));
@@ -513,25 +519,26 @@ const DataTransformer = {
         return [headers, ...rows];
     },
 
-    parseDate(dateStr) {
-        if (!dateStr || typeof dateStr !== 'string') return null;
-        const parts = dateStr.split('/');
-        if (parts.length !== 3) return null;
-        const [dd, mm, yyyy] = parts;
-        const d = new Date(`${yyyy}-${mm}-${dd}`);
-        if (isNaN(d.getTime())) return null;
-        d.setHours(0,0,0,0);
-        return d;
-    },
-
     createRemovedRecord(row, headers, reason) {
+        let payableName = row[headers.indexOf("payable_name")] || '';
+        
+        // If payable_name doesn't exist yet (because filtering happens before column addition), generate it
+        if (!payableName) {
+            const title = row[headers.indexOf("Title_Cached")] || '';
+            const dateAdded = row[headers.indexOf("Date_Added")] || '';
+            if (title) {
+                // PayableNameGenerator is available in scope
+                payableName = PayableNameGenerator.generate(title, dateAdded);
+            }
+        }
+
         return {
             student_id: row[headers.indexOf("student_id")] || '',
             payer_name: row[headers.indexOf("Payer_Name_Cached")] || '',
             tutor: row[headers.indexOf("zc_Tutor_LiveGrid")] || '',
             title: row[headers.indexOf("Title_Cached")] || '',
             amount_owing: row[headers.indexOf("zc_Amount_Owing")] || '',
-            payable_name: row[headers.indexOf("payable_name")] || '',
+            payable_name: payableName,
             reason
         };
     }
@@ -766,10 +773,23 @@ const FileGenerator = {
     generateRemovedStudents(removedRecords) {
         if (!removedRecords || removedRecords.length === 0) return [];
         
-        const headers = ['student_id', 'payer_name', 'tutor', 'title', 'amount_owing', 'payable_name', 'removal_reason'];
-        const rows = removedRecords.map(s => [
-            s.student_id, s.payer_name, s.tutor, s.title, s.amount_owing, s.payable_name || '', s.reason
-        ]);
+        const headers = ['student_id', 'name', 'removal_reason'];
+        const seen = new Set();
+        const rows = [];
+        
+        for (const s of removedRecords) {
+            // Ensure we only list each student once
+            const id = (s.student_id || '').trim();
+            if (!id || seen.has(id)) continue;
+            
+            seen.add(id);
+            
+            rows.push([
+                s.student_id, 
+                s.payer_name, 
+                s.reason
+            ]);
+        }
         
         return [headers, ...rows];
     }
@@ -867,12 +887,13 @@ const UI = {
         html += `<div>Original records: ${stats.original}</div>`;
         
         if (stats.removed.zeroOwing > 0) html += `<div>Filtered (zero owing): ${stats.removed.zeroOwing}</div>`;
+        if (stats.removed.hasLeft > 0) html += `<div>Removed (student has left): ${stats.removed.hasLeft}</div>`;
         if (stats.removed.notOnSeedRoll > 0) html += `<div>Removed (not on seed roll): ${stats.removed.notOnSeedRoll}</div>`;
         if (stats.removed.excluded > 0) html += `<div>Removed (already uploaded): ${stats.removed.excluded}</div>`;
         if (stats.removed.filtered > 0) html += `<div>Removed (filtered by name): ${stats.removed.filtered}</div>`;
         
     // Total removed (excluding zero owing which is just filtering)
-    const totalRemoved = (stats.removed.notOnSeedRoll || 0) + (stats.removed.excluded || 0) + (stats.removed.filtered || 0);
+    const totalRemoved = (stats.removed.hasLeft || 0) + (stats.removed.notOnSeedRoll || 0) + (stats.removed.excluded || 0) + (stats.removed.filtered || 0);
     html += `<div><strong>Total removed: ${totalRemoved}</strong></div>`;
         
         // Show concise payables summary only
@@ -983,6 +1004,7 @@ const Processor = {
             original: 0,
             removed: {
                 zeroOwing: 0,
+                hasLeft: 0,
                 notOnSeedRoll: 0,
                 excluded: 0,
                 filtered: 0
@@ -1011,6 +1033,12 @@ const Processor = {
         state.stats.removed.zeroOwing = result.removed.length;
         // NOTE: Zero owing records are NOT added to state.csv.removed (data cleanup, not a removal)
         
+        // Filter students who have left (any date in zc_LeftDate)
+        result = DataTransformer.filterPastLeftDate(data);
+        data = result.data;
+        state.stats.removed.hasLeft = result.removed.length;
+        state.csv.removed.push(...result.removed);
+
         // Append MOE numbers BEFORE filtering by seed roll (gives best chance of matching)
         data = DataTransformer.appendMOE(data, state.seedRoll.idMap, state.config.moeFallback);
         
@@ -1183,7 +1211,7 @@ const EventHandlers = {
         document.getElementById('rawBtn').addEventListener('click', this.downloadRaw);
         
         // Reset
-        document.getElementById('resetBtn').addEventListener('click', this.handleReset);
+        document.getElementById('startOverBtn').addEventListener('click', this.handleReset);
         
         // Help
         document.getElementById('helpBtn').addEventListener('click', () => {

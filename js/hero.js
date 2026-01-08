@@ -53,8 +53,8 @@ document.addEventListener('DOMContentLoaded', function() {
     processBtnHero?.addEventListener('click', processHeroData);
     
     // Reset button
-    const resetBtnHero = document.getElementById('resetBtnHero');
-    resetBtnHero?.addEventListener('click', resetHeroApp);
+    const startOverBtnHero = document.getElementById('startOverBtnHero');
+    startOverBtnHero?.addEventListener('click', resetHeroApp);
     
     // Download buttons
     document.getElementById('payablesBtnHero')?.addEventListener('click', () => downloadHeroFile('payables'));
