@@ -74,10 +74,14 @@
                     </div>
                     <p class="help-note">This ensures correct MOE numbers for each student and filters out students who
                         have left.</p>
-                    <label class="instruction-label" for="seedRollPaste">Paste the full seed roll JSON from
+                    <label class="instruction-label" for="seedRollPaste">Paste the full seed roll from
                         Kindo:</label>
+                    <div style="margin-bottom: 10px; font-size: 0.9rem; color: #666;">
+                        1. Go to <strong>Admin > Seed Roll > Export</strong><br>
+                        2. Select <strong>"Export Text (tab separated)"</strong>
+                    </div>
                     <textarea id="seedRollPaste" rows="6"
-                        placeholder='Paste seed roll JSON here (e.g., {"rtype": "roll_student_search_result", "matches": [...]})'></textarea>
+                        placeholder='Paste seed roll here.'></textarea>
                     <button id="loadSeedRollBtn" class="btn-primary">Load Seed Roll</button>
                     <div id="seedRollStatus" class="status-message"></div>
                 </section>
@@ -442,13 +446,15 @@
 
                 <h2>Step-by-step guide</h2>
                 <ol>
-                    <li><strong>Upload files:</strong> Add the Kamar <em>Charged</em> CSV(s) (required), then optionally
-                        add the current‑year <em>Charges</em> CSV.</li>
-                    <li><strong>Load Seed Roll (recommended):</strong> Paste Kindo’s seed roll JSON to add the correct
+                    <li><strong>Upload files:</strong> Add the Kamar <em>Charged</em> CSV(s) which contain the student
+                        debt data (required). Optionally, add the current‑year <em>Charges</em> CSV to provide GL
+                        codes and GST details.</li>
+                    <li><strong>Load Seed Roll (Required):</strong> Paste Kindo’s seed roll JSON to add the correct
                         MOE and filter to current students.</li>
-                    <li><strong>Configure:</strong> Enter the school name (for filenames) and an MOE fallback.</li>
-                    <li><strong>Optional filters:</strong> Exclude previously uploaded students or remove specific
-                        product names.</li>
+                    <li><strong>Configure:</strong> Enter the school name (for filenames). The MOE number is
+                        sourced from the seed roll.</li>
+                    <li><strong>Optional filters:</strong> Exclude previously uploaded students to prevent duplicates
+                        if you are loading extra outstandings, or remove specific product names.</li>
                     <li><strong>Process:</strong> Click “Process Data”, then download the files for Kindo.</li>
                 </ol>
 
