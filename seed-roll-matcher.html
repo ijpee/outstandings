@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seed Roll ID Matcher</title>
+    <link rel="stylesheet" href="seed-roll-matcher.css">
+    <script src="js/seed-roll-matcher.js" defer></script>
+</head>
+
+<body>
+    <main class="page-shell">
+        <header class="page-header">
+            <div>
+                <p class="eyebrow">Standalone Tool</p>
+                <h1>Seed Roll ID Matcher</h1>
+                <p class="intro">Paste a seed roll and a one-column list of student names. The matcher will try to resolve each name to the correct student ID without touching the existing KAMAR, Hero, or Edge flows.</p>
+            </div>
+        </header>
+
+        <section class="card help-card">
+            <h2>Expected Input</h2>
+            <div class="help-grid">
+                <div>
+                    <h3>Seed Roll</h3>
+                    <p>Accepts Kindo JSON or tab/comma-separated seed roll text.</p>
+                </div>
+                <div>
+                    <h3>Name List</h3>
+                    <p>One name per line. Supports formats like <strong>LAST NAME, First Name</strong>, uppercase surname tails, extra spaces, and nickname hints in parentheses.</p>
+                </div>
+                <div>
+                    <h3>Duplicates</h3>
+                    <p>Duplicate pasted lines are collapsed in the main output, with the occurrence count preserved.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="card input-card">
+            <div class="input-grid">
+                <div class="input-group">
+                    <label for="seedRollInputMatcher">Seed Roll</label>
+                    <textarea id="seedRollInputMatcher" rows="14" placeholder="Paste Kindo JSON or seed roll text here"></textarea>
+                </div>
+                <div class="input-group">
+                    <label for="studentListInputMatcher">Student Names</label>
+                    <textarea id="studentListInputMatcher" rows="14" placeholder="Paste one student name per line"></textarea>
+                </div>
+            </div>
+            <div class="action-row">
+                <button id="matchBtnMatcher" class="btn btn-primary">Match Names</button>
+                <button id="resetBtnMatcher" class="btn btn-secondary">Reset</button>
+                <button id="copyMatchedBtnMatcher" class="btn btn-secondary" disabled>Copy Matched CSV</button>
+                <button id="downloadMatchedBtnMatcher" class="btn btn-secondary" disabled>Download Matched CSV</button>
+            </div>
+            <div id="statusMatcher" class="status-message" aria-live="polite"></div>
+        </section>
+
+        <section id="resultsSectionMatcher" class="results-shell" hidden>
+            <section class="card">
+                <div class="section-header">
+                    <h2>Review Queue</h2>
+                    <p>Only students with multiple plausible matches appear here for manual review.</p>
+                </div>
+                <div id="reviewListMatcher" class="review-list empty-state-host"></div>
+            </section>
+
+            <section class="card">
+                <div class="section-header">
+                    <h2>Unmatched</h2>
+                    <p>No reliable match was found. Suggested candidates are shown when available.</p>
+                </div>
+                <div id="unmatchedListMatcher" class="review-list empty-state-host"></div>
+            </section>
+
+            <section class="card">
+                <h2>Summary</h2>
+                <div id="summaryMatcher" class="summary-grid"></div>
+            </section>
+
+            <section class="card">
+                <div class="section-header">
+                    <h2>Student ID Output</h2>
+                    <p>One row for every pasted line. Unresolved rows show <strong>MISSING</strong>.</p>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Pasted Student</th>
+                                <th>Student ID</th>
+                            </tr>
+                        </thead>
+                        <tbody id="outputTableBodyMatcher"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="section-header">
+                    <h2>Matched</h2>
+                    <p>Original name plus resolved student ID.</p>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Original Name</th>
+                                <th>Occurrences</th>
+                                <th>Matched Student</th>
+                                <th>Student ID</th>
+                                <th>Method</th>
+                                <th>Confidence</th>
+                            </tr>
+                        </thead>
+                        <tbody id="matchedTableBodyMatcher"></tbody>
+                    </table>
+                </div>
+            </section>
+        </section>
+    </main>
+</body>
+
+</html>

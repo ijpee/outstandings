@@ -136,7 +136,7 @@ function parseEdgeCSV(csv) {
         if (!line.trim()) continue;
         
         // Parse CSV with quoted fields support
-        const cols = parseCSVLine(line);
+        const cols = parseEdgeCSVLine(line);
         if (cols.length < 6) continue; // Skip incomplete rows
         
         const studentName = cols[colMap.student]?.trim() || '';
@@ -158,7 +158,7 @@ function parseEdgeCSV(csv) {
     return data;
 }
 
-function parseCSVLine(line) {
+function parseEdgeCSVLine(line) {
     const result = [];
     let current = '';
     let inQuotes = false;
@@ -1010,7 +1010,7 @@ function downloadEdgeFile(type) {
             break;
             
         case 'pcats':
-            csvContent = 'proto_payable_name,pcat\n';
+            csvContent = 'label,pcat\n';
             csvContent += Array.from(edgeProcessedData.pcats).map(row => {
                 const [name, cat] = row.split('\t');
                 return [name, cat].map(escapeEdgeCSV).join(',');

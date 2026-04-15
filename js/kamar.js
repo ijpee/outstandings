@@ -712,7 +712,7 @@ const FileGenerator = {
     generatePcats(data, chargesMap = {}) {
         if (!Array.isArray(data) || data.length < 2) return [];
         
-        const headers = ["proto_payable_name", "pcat"];
+        const headers = ["label", "pcat"];
         const colIdx = {};
         data[0].forEach((h, i) => { colIdx[h] = i; });
         

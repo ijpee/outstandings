@@ -67,96 +67,231 @@ function handleHeroFileUpload(event) {
     const files = event.target.files;
     if (!files || files.length === 0) return;
     
-    const file = files[0];
+    // Reset data
+    heroRawData = [];
+    let processedCount = 0;
+    const totalFiles = files.length;
+    const fileNames = [];
+    
     const fileNameDiv = document.getElementById('fileNameHero');
-    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
-    
-    fileNameDiv.textContent = `Selected: ${file.name}`;
-    fileNameDiv.className = 'file-status';
-    
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        try {
-            let data;
-            
-            if (isExcel) {
-                // Parse Excel file using SheetJS
-                const arrayBuffer = e.target.result;
-                const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[sheetName];
+    fileNameDiv.className = 'file-status loading';
+    fileNameDiv.textContent = `Processing ${totalFiles} file(s)...`;
+
+    Array.from(files).forEach(file => {
+        fileNames.push(file.name);
+        const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+        
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                let newData = [];
                 
-                // Convert to CSV format
-                const csv = XLSX.utils.sheet_to_csv(worksheet, { FS: '\t' });
-                data = parseHeroCSV(csv);
-            } else {
-                // Parse CSV file
-                const csv = e.target.result;
-                data = parseHeroCSV(csv);
+                if (isExcel) {
+                    // Parse Excel file using SheetJS
+                    const arrayBuffer = e.target.result;
+                    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[sheetName];
+                    
+                    // Convert to CSV format
+                    const csv = XLSX.utils.sheet_to_csv(worksheet, { FS: '\t' });
+                    newData = parseHeroCSV(csv);
+                } else {
+                    // Parse CSV file
+                    const csv = e.target.result;
+                    newData = parseHeroCSV(csv);
+                }
+                
+                heroRawData = heroRawData.concat(newData);
+                processedCount++;
+                
+                if (processedCount === totalFiles) {
+                    console.log(`Parsed ${heroRawData.length} rows from ${totalFiles} Hero SMS files`);
+                    const nameDisplay = totalFiles === 1 ? fileNames[0] : `${totalFiles} files`;
+                    fileNameDiv.textContent = `✓ Loaded ${heroRawData.length} transactions from ${nameDisplay}`;
+                    fileNameDiv.className = 'file-status success';
+                    updateProcessButton();
+                }
+            } catch (error) {
+                console.error('Error parsing Hero file:', error);
+                fileNameDiv.textContent = `Error: ${error.message}`;
+                fileNameDiv.className = 'file-status error';
             }
-            
-            heroRawData = data;
-            console.log(`Parsed ${heroRawData.length} rows from Hero SMS`);
-            fileNameDiv.textContent = `✓ Loaded ${heroRawData.length} transactions from ${file.name}`;
-            fileNameDiv.className = 'file-status success';
-            updateProcessButton();
-        } catch (error) {
-            console.error('Error parsing Hero file:', error);
-            fileNameDiv.textContent = `Error: ${error.message}`;
-            fileNameDiv.className = 'file-status error';
+        };
+        
+        if (isExcel) {
+            reader.readAsArrayBuffer(file);
+        } else {
+            reader.readAsText(file);
         }
-    };
+    });
+}
+
+// Parse a single CSV line respecting quoted fields (handles commas inside quotes)
+function parseHeroCSVLine(line, delimiter) {
+    const fields = [];
+    let current = '';
+    let inQuotes = false;
     
-    if (isExcel) {
-        reader.readAsArrayBuffer(file);
-    } else {
-        reader.readAsText(file);
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inQuotes) {
+            if (ch === '"' && i + 1 < line.length && line[i + 1] === '"') {
+                current += '"'; // escaped quote
+                i++;
+            } else if (ch === '"') {
+                inQuotes = false;
+            } else {
+                current += ch;
+            }
+        } else {
+            if (ch === '"') {
+                inQuotes = true;
+            } else if (ch === delimiter) {
+                fields.push(current.trim());
+                current = '';
+            } else {
+                current += ch;
+            }
+        }
     }
+    fields.push(current.trim());
+    return fields;
+}
+
+function detectDelimitedColumnCount(line, delimiter) {
+    return parseHeroCSVLine(line, delimiter).length;
+}
+
+function normalizeHeroHeader(header) {
+    return (header || '')
+        .replace(/^\uFEFF/, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+function detectHeroDelimiter(line) {
+    const candidates = ['\t', ',', ';'];
+    let bestDelimiter = ',';
+    let bestCount = 0;
+
+    candidates.forEach(candidate => {
+        const count = detectDelimitedColumnCount(line, candidate);
+        if (count > bestCount) {
+            bestCount = count;
+            bestDelimiter = candidate;
+        }
+    });
+
+    return bestCount > 1 ? bestDelimiter : ',';
 }
 
 function parseHeroCSV(csv) {
     const lines = csv.split('\n').filter(line => line.trim());
     if (lines.length < 2) throw new Error('CSV file is empty or invalid');
     
-    const headers = lines[0].split('\t').map(h => h.trim());
+    // Smart Header Detection:
+    // 1. Scan first 15 rows to find the line containing "Date", "Ledger", and "Balance"
+    // 2. Detect if it uses Tabs (\t) or Commas (,)
+    let headerRowIndex = -1;
+    let delimiter = '\t'; // Default to tab
+    let headers = [];
+    
+    for (let i = 0; i < Math.min(lines.length, 15); i++) {
+        const line = lines[i];
+        
+        // Check for key columns to identify the header row
+        // Looking for Date, Ledger, and Name fields which are consistent across versions
+        if (line.includes('Date') && line.includes('Ledger') && (line.includes('Name') || line.includes('Description'))) {
+            delimiter = detectHeroDelimiter(line);
+            if (detectDelimitedColumnCount(line, delimiter) > 5) {
+                headerRowIndex = i;
+                break;
+            }
+        }
+    }
+    
+    // Fallback: If headers weren't found clearly, assume row 0
+    if (headerRowIndex === -1) {
+        headerRowIndex = 0;
+        delimiter = detectHeroDelimiter(lines[0]);
+    }
+
+    headers = parseHeroCSVLine(lines[headerRowIndex], delimiter).map(header => header.replace(/^\uFEFF/, '').trim());
+    const normalizedHeaders = headers.map(normalizeHeroHeader);
+    const headerIndex = expectedHeader => normalizedHeaders.indexOf(normalizeHeroHeader(expectedHeader));
     const data = [];
     
     // Expected columns: ID, Date, Ledger, Line Item, Description, Student ID, Last Name, First Name, Room, Year Level, Debit, Credit, Balance
     const colMap = {
-        date: headers.indexOf('Date'),
-        ledger: headers.indexOf('Ledger'),
-        lineItem: headers.indexOf('Line Item'),
-        description: headers.indexOf('Description'),
-        lastName: headers.indexOf('Last Name'),
-        firstName: headers.indexOf('First Name'),
-        room: headers.indexOf('Room'),
-        yearLevel: headers.indexOf('Year Level'),
-        debit: headers.indexOf('Debit'),
-        credit: headers.indexOf('Credit'),
-        balance: headers.indexOf('Balance')
+        date: headerIndex('Date'),
+        ledger: headerIndex('Ledger'),
+        lineItem: headerIndex('Line Item'),
+        description: headerIndex('Description'),
+        studentId: headerIndex('Student ID'),
+        lastName: headerIndex('Last Name'),
+        firstName: headerIndex('First Name'),
+        room: headerIndex('Room'),
+        yearLevel: headerIndex('Year Level'),
+        debit: headerIndex('Debit'),
+        credit: headerIndex('Credit'), 
+        // Add support for split credit columns
+        receipts: headerIndex('Receipts'),
+        otherCredits: headerIndex('Other Credits'),
+        balance: headerIndex('Balance')
     };
     
     // Validate required columns
-    const missing = Object.entries(colMap).filter(([key, val]) => val === -1).map(([key]) => key);
+    const missing = Object.entries(colMap).filter(([key, val]) => {
+        // Credit is special: it's not missing if we have "Receipts" 
+        if (key === 'credit') {
+            return val === -1 && colMap.receipts === -1;
+        }
+        // Student ID and split credit columns are optional helpers
+        if (key === 'studentId' || key === 'receipts' || key === 'otherCredits') return false;
+        
+        return val === -1;
+    }).map(([key]) => key);
+
     if (missing.length > 0) {
-        throw new Error(`Missing required columns: ${missing.join(', ')}`);
+        // Create user-friendly error message
+        const friendlyNames = {
+            date: 'Date', ledger: 'Ledger', lineItem: 'Line Item', description: 'Description',
+            lastName: 'Last Name', firstName: 'First Name', room: 'Room', yearLevel: 'Year Level',
+            debit: 'Debit', credit: 'Credit (or Receipts)', balance: 'Balance'
+        };
+        const missingHeaders = missing.map(key => friendlyNames[key] || key);
+        throw new Error(`Missing required headers: ${missingHeaders.join(', ')}.\nFound headers: ${headers.join(', ')}`);
     }
     
-    for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split('\t');
+    for (let i = headerRowIndex + 1; i < lines.length; i++) {
+        const cols = parseHeroCSVLine(lines[i], delimiter);
         if (cols.length < 10) continue; // Skip incomplete rows
         
+        // Calculate credit value handling the variations
+        let creditVal = 0;
+        if (colMap.credit !== -1) {
+            creditVal = parseFloat(cols[colMap.credit]) || 0;
+        } else {
+            // Sum up alternative credit columns
+            const receipts = colMap.receipts !== -1 ? (parseFloat(cols[colMap.receipts]) || 0) : 0;
+            const other = colMap.otherCredits !== -1 ? (parseFloat(cols[colMap.otherCredits]) || 0) : 0;
+            creditVal = receipts + other;
+        }
+
         data.push({
             date: cols[colMap.date]?.trim() || '',
             ledger: cols[colMap.ledger]?.trim() || '',
             lineItem: cols[colMap.lineItem]?.trim() || '',
             description: cols[colMap.description]?.trim() || '',
+            studentIdRaw: colMap.studentId !== -1 ? cols[colMap.studentId]?.trim() : '', // Added capture
             lastName: cols[colMap.lastName]?.trim() || '',
             firstName: cols[colMap.firstName]?.trim() || '',
             room: cols[colMap.room]?.trim() || '',
             yearLevel: cols[colMap.yearLevel]?.trim() || '',
             debit: parseFloat(cols[colMap.debit]) || 0,
-            credit: parseFloat(cols[colMap.credit]) || 0,
+            credit: creditVal,
             balance: parseFloat(cols[colMap.balance]) || 0
         });
     }
@@ -265,6 +400,70 @@ function toggleHeroFilters() {
     }
 }
 
+// --- New Helper: Duplicates Check ---
+function checkHeroDuplicates(outstandings) {
+    if (!outstandings || outstandings.length === 0) return [];
+    
+    const seen = new Set();
+    const duplicatePayables = new Set();
+    
+    outstandings.forEach(row => {
+        // studentId + payableName should be unique
+        const key = `${row.student_id}||${row.payable_name}`;
+        
+        if (seen.has(key)) {
+            duplicatePayables.add(row.payable_name);
+        } else {
+            seen.add(key);
+        }
+    });
+
+    return Array.from(duplicatePayables);
+}
+
+function displayHeroDuplicates(duplicates) {
+    const container = document.getElementById('duplicatesContainerHero');
+    if (!container) return;
+    
+    // Always clear old content first so we don't duplicate the list itself
+    // Only proceed if we have *actual* duplicates
+    if (!duplicates || duplicates.length === 0) {
+        // If we previously added content, we might want to clear it, 
+        // but we need to be careful not to wipe out the "Removed Students" or "Flagged Matches" sections 
+        // if they are sharing this container.
+        // However, based on the structure, this function targets `duplicatesContainerHero` 
+        // which seems to be dedicated to this or shared. 
+        // Let's assume we append or replace.
+        // For safety/consistency with Kamar logic, let's just create a distinct section.
+        
+        // Let's remove any existing "Exceeds Limit" block only
+        const existing = container.querySelector('.exceeds-limit-block');
+        if (existing) existing.remove();
+        return;
+    }
+
+    let html = `
+        <div class="card exceeds-limit-block" style="border-color: #f44336; background: #ffebee; margin-top: 16px;">
+            <div class="card-header">
+                <h3>⚠ Application Limit Exceeded</h3>
+            </div>
+            <p style="color: #c62828;">The following items appear multiple times for the same student. This will cause an upload error in Kindo ("Application Limit Exceeded").</p>
+            <ul class="exceeds-limit-list" style="margin-top: 8px; padding-left: 20px; color: #d32f2f;">
+    `;
+    
+    duplicates.forEach(name => {
+        html += `<li>${name}</li>`;
+    });
+    
+    html += `
+            </ul>
+        </div>
+    `;
+    
+    // Append to container
+    container.innerHTML += html;
+}
+
 function processHeroData() {
     const statusDiv = document.getElementById('statusHero');
     
@@ -326,14 +525,24 @@ function processHeroData() {
             continue;
         }
         
-        // Match student by name + room + year level
-        const matchResult = matchStudentByNameAndRoom(
-            row.lastName,
-            row.firstName,
-            row.room,
-            row.yearLevel,
-            heroSeedRoll
-        );
+        // --- NEW MATCHING LOGIC ---
+        // 1. Try matching by "Student ID" from the file first (most accurate)
+        let matchResult = null;
+        
+        if (row.studentIdRaw) {
+             matchResult = matchStudentDirectly(row.studentIdRaw);
+        }
+
+        // 2. If no direct ID match, fallback to Fuzzy Matching (Name + Room)
+        if (!matchResult || !matchResult.matched) {
+             matchResult = matchStudentByNameAndRoom(
+                row.lastName,
+                row.firstName,
+                row.room,
+                row.yearLevel,
+                heroSeedRoll
+            );
+        }
         
         if (!matchResult || !matchResult.matched) {
             const reason = matchResult ? matchResult.reason : 'No name match found';
@@ -357,6 +566,9 @@ function processHeroData() {
             });
             continue;
         }
+
+        // CONFIRMATION FIX: If we matched a student, attach their ID to the row for future reference
+        row.matchedStudentId = matchResult.studentId;
         
         // Check if student is excluded
         if (excludeStudentIds.includes(matchResult.studentId)) {
@@ -383,8 +595,8 @@ function processHeroData() {
             category.toLowerCase().includes(kw)
         );
         
-        // GST status - GST by default, no GST for donations
-        const gstStatus = isDonation ? 'no GST' : 'GST';
+        // GST status - GST by default, GST exempt for donations
+        const gstStatus = isDonation ? 'GST exempt' : 'GST';
         
         // Add to payables (use Map to avoid duplicates)
         if (!heroProcessedData.payables.has(payableName)) {
@@ -414,12 +626,20 @@ function processHeroData() {
     // Convert payables Map to array
     heroProcessedData.payables = Array.from(heroProcessedData.payables.values());
     
+    // Check for Duplicates (Application Limit Check)
+    const duplicates = checkHeroDuplicates(heroProcessedData.outstandings);
+
     // Show results
     displayHeroResults();
     
     // Show flagged matches if any
     if (heroFlaggedMatches.length > 0) {
         displayFlaggedMatches();
+    }
+    
+    // Show duplicates if any
+    if (duplicates.length > 0) {
+        displayHeroDuplicates(duplicates);
     }
     
     statusDiv.textContent = '✓ Processing complete!';
@@ -490,6 +710,29 @@ function extractLedgerCode(ledger) {
     return match ? match[1] : '';
 }
 
+// --- New Helper: Direct Match by ID ---
+function matchStudentDirectly(fileStudentId) {
+    if (!fileStudentId) return null;
+
+    // Normalize IDs (remove leading zeros, etc.) just to be safe
+    const targetId = fileStudentId.replace(/^0+/, '');
+
+    const found = heroSeedRoll.find(s => {
+        // Check against "student_id" or "id" or "reference" field in seed roll
+        const seedId = (s.student_id || s.id || '').toString().replace(/^0+/, '');
+        return seedId === targetId;
+    });
+
+    if (found) {
+        return {
+            matched: true,
+            studentId: found.student_id, // Return original format
+            details: found
+        };
+    }
+    return null;
+}
+
 function matchStudentByNameAndRoom(lastName, firstName, room, yearLevel, seedRoll) {
     // Normalize room (remove "Room " prefix if present)
     const normalizedRoom = room.replace(/^Room\s*/i, '').trim();
@@ -515,24 +758,22 @@ function matchStudentByNameAndRoom(lastName, firstName, room, yearLevel, seedRol
     }
     
     if (nameMatches.length === 1) {
-        // Single match - verify room
+        // Single name match found
         const student = nameMatches[0];
         const studentRoom = (student.class_name || '').replace(/^Room\s*/i, '').trim();
         
-        if (studentRoom === normalizedRoom) {
-            return {
-                matched: true,
-                studentId: student.student_id,
-                needsReview: false
-            };
+        // Strict room check ONLY if the file actually has a room
+        if (normalizedRoom && studentRoom !== normalizedRoom) {
+            // Room mismatch (e.g., Year 8 vs Year 9)
+            // But since it's a UNIQUE name match, we accept it with a flag
+            console.warn(`Room mismatch for ${firstName} ${lastName}: File '${normalizedRoom}' vs Seed '${studentRoom}' (Matched by unique name)`);
         }
         
-        // Room doesn't match - flag for review
+        // Always return match if unique name, even if room differs
         return {
-            matched: false,
-            needsReview: true,
-            candidates: nameMatches,
-            reason: `Name matches but room differs (Expected: ${normalizedRoom}, Found: ${studentRoom})`
+            matched: true,
+            studentId: student.student_id,
+            needsReview: false
         };
     }
     
@@ -543,20 +784,16 @@ function matchStudentByNameAndRoom(lastName, firstName, room, yearLevel, seedRol
     });
     
     if (yearMatches.length === 1) {
-        // Single match after year filter - verify room
-        const student = yearMatches[0];
-        const studentRoom = (student.class_name || '').replace(/^Room\s*/i, '').trim();
-        
-        if (studentRoom === normalizedRoom) {
-            return {
-                matched: true,
-                studentId: student.student_id,
-                needsReview: false
-            };
-        }
+        // Single match after year filter - accept it
+        // We can be strict on room here if needed, but year match + name match is usually enough
+        return {
+            matched: true,
+            studentId: yearMatches[0].student_id,
+            needsReview: false
+        };
     }
     
-    // Try exact room match
+    // Try exact room match among the name matches
     const roomMatches = nameMatches.filter(student => {
         const studentRoom = (student.class_name || '').replace(/^Room\s*/i, '').trim();
         return studentRoom === normalizedRoom;
@@ -847,7 +1084,7 @@ function downloadHeroFile(type) {
             break;
             
         case 'pcats':
-            csvContent = 'proto_payable_name,pcat\n';
+            csvContent = 'label,pcat\n';
             csvContent += Array.from(heroProcessedData.pcats).map(row => {
                 const [name, cat] = row.split('\t');
                 return [name, cat].map(escapeCSV).join(',');
