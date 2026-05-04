@@ -14,7 +14,8 @@ const state = {
     },
     seedRoll: {
         ids: [],
-        idMap: {}
+        idMap: {},
+        leftIds: []
     },
     exclude: {
         ids: []
@@ -27,6 +28,7 @@ const state = {
         original: 0,
         removed: {
             zeroOwing: 0,
+            leftSeedRoll: 0,
             notOnSeedRoll: 0,
             excluded: 0,
             filtered: 0
@@ -157,6 +159,17 @@ const CSVParser = {
 // ============================================================================
 
 const SeedRollParser = {
+    isLeftStudent(leftStatus, leftDate) {
+        const statusText = String(leftStatus || '').trim().toLowerCase();
+        const dateText = String(leftDate || '').trim();
+        const leftStatusRegex = /\b(left|leaver|withdrawn?|withdrawal|inactive|de-?registered|not\s+returning)\b/i;
+
+        if (leftStatusRegex.test(statusText)) return true;
+        if (dateText && dateText !== '-') return true;
+
+        return false;
+    },
+
     parse(text) {
         // Try JSON format first (Kindo export)
         try {
@@ -173,8 +186,10 @@ const SeedRollParser = {
 
     parseJSON(matches) {
         const seen = new Set();
+        const seenLeft = new Set();
         const ids = [];
         const idMap = {};
+        const leftIds = [];
         
         matches.forEach(student => {
             const fullId = (student.student_id_ext || '').trim();
@@ -190,6 +205,19 @@ const SeedRollParser = {
             
             // Validate it looks like a student ID (numbers and dots only)
             if (!/^\d+\.\d+$/.test(fullId)) return;
+
+            const isLeft = this.isLeftStudent(
+                student.left_status ?? student.left ?? student.status ?? student.student_status ?? '',
+                student.left_date ?? student.leftDate ?? student.left_on ?? ''
+            );
+
+            if (isLeft) {
+                if (!seenLeft.has(fullId)) {
+                    seenLeft.add(fullId);
+                    leftIds.push(fullId);
+                }
+                return;
+            }
             
             seen.add(fullId);
             ids.push(fullId);
@@ -199,16 +227,19 @@ const SeedRollParser = {
         });
         
         console.log(`Parsed ${ids.length} student IDs from JSON seed roll`);
+        console.log(`Excluded ${leftIds.length} left students from JSON seed roll`);
         console.log(`Created ID mapping for ${Object.keys(idMap).length} base IDs`);
         
-        return { ids, idMap };
+        return { ids, idMap, leftIds };
     },
 
     parseTSV(text) {
         const lines = text.replace(/\r\n?/g, '\n').split('\n');
         const seen = new Set();
+        const seenLeft = new Set();
         const ids = [];
         const idMap = {};
+        const leftIds = [];
         
         lines.forEach(line => {
             const trimmed = line.trim();
@@ -222,6 +253,19 @@ const SeedRollParser = {
             const tag = (columns[0] || '').trim().toLowerCase();
             if (tag === 'student' && columns[1]) {
                 const fullId = columns[1].trim();
+
+                const leftStatus = columns[6] || '';
+                const leftDate = columns[7] || '';
+                const isLeft = this.isLeftStudent(leftStatus, leftDate);
+
+                if (isLeft) {
+                    if (fullId && fullId.includes('.') && !seenLeft.has(fullId)) {
+                        seenLeft.add(fullId);
+                        leftIds.push(fullId);
+                    }
+                    return;
+                }
+
                 if (fullId && fullId.includes('.') && !seen.has(fullId)) {
                     seen.add(fullId);
                     ids.push(fullId);
@@ -233,8 +277,9 @@ const SeedRollParser = {
         });
         
         console.log(`Parsed ${ids.length} student IDs from TSV seed roll`);
+        console.log(`Excluded ${leftIds.length} left students from TSV seed roll`);
         
-        return { ids, idMap };
+        return { ids, idMap, leftIds };
     }
 };
 
@@ -404,7 +449,7 @@ const DataTransformer = {
         return { data: [headers, ...filtered], removed };
     },
 
-    filterBySeedRollWithReasons(data, seedRollIds) {
+    filterBySeedRollWithReasons(data, seedRollIds, leftSeedRollIds = []) {
         if (!seedRollIds || seedRollIds.length === 0) {
             // If no seed roll, return all data (should not happen as we make it mandatory)
             return { data, removed: [] };
@@ -415,6 +460,7 @@ const DataTransformer = {
         const tutorIdx = headers.indexOf("zc_Tutor_LiveGrid");
         // Removed zc_LeftDate usage as it is handled by filterPastLeftDate now
         const seedSet = new Set(seedRollIds.map(id => id.trim()));
+        const leftSeedSet = new Set((leftSeedRollIds || []).map(id => id.trim()));
         const removed = [];
         
         const filtered = data.slice(1).filter(row => {
@@ -428,13 +474,17 @@ const DataTransformer = {
             // NOT ON SEED ROLL = REMOVE
             const tutor = (row[tutorIdx] || '').toLowerCase();
             let reason = 'Not on Seed Roll';
+
+            if (leftSeedSet.has(studentId)) {
+                reason = 'Student Left (Seed Roll)';
+            }
             
             // Check simplified reasons
-            if (tutor.includes('pre-enrol') || tutor.includes('preenrol') ||
-                (tutor.includes('enrol') && !tutor.includes('enrollment'))) {
+            if (reason === 'Not on Seed Roll' && (tutor.includes('pre-enrol') || tutor.includes('preenrol') ||
+                (tutor.includes('enrol') && !tutor.includes('enrollment')))) {
                 reason = 'Pre-Enrol';
-            } else if (tutor.includes('staff') || tutor.includes('admin') || 
-                tutor.includes('teacher') || tutor.includes('employee')) {
+            } else if (reason === 'Not on Seed Roll' && (tutor.includes('staff') || tutor.includes('admin') || 
+                tutor.includes('teacher') || tutor.includes('employee'))) {
                 reason = 'Staff';
             }
             
@@ -888,12 +938,13 @@ const UI = {
         
         if (stats.removed.zeroOwing > 0) html += `<div>Filtered (zero owing): ${stats.removed.zeroOwing}</div>`;
         if (stats.removed.hasLeft > 0) html += `<div>Removed (student has left): ${stats.removed.hasLeft}</div>`;
+        if (stats.removed.leftSeedRoll > 0) html += `<div>Removed (left in seed roll): ${stats.removed.leftSeedRoll}</div>`;
         if (stats.removed.notOnSeedRoll > 0) html += `<div>Removed (not on seed roll): ${stats.removed.notOnSeedRoll}</div>`;
         if (stats.removed.excluded > 0) html += `<div>Removed (already uploaded): ${stats.removed.excluded}</div>`;
         if (stats.removed.filtered > 0) html += `<div>Removed (filtered by name): ${stats.removed.filtered}</div>`;
         
     // Total removed (excluding zero owing which is just filtering)
-    const totalRemoved = (stats.removed.hasLeft || 0) + (stats.removed.notOnSeedRoll || 0) + (stats.removed.excluded || 0) + (stats.removed.filtered || 0);
+    const totalRemoved = (stats.removed.hasLeft || 0) + (stats.removed.leftSeedRoll || 0) + (stats.removed.notOnSeedRoll || 0) + (stats.removed.excluded || 0) + (stats.removed.filtered || 0);
     html += `<div><strong>Total removed: ${totalRemoved}</strong></div>`;
         
         // Show concise payables summary only
@@ -1005,6 +1056,7 @@ const Processor = {
             removed: {
                 zeroOwing: 0,
                 hasLeft: 0,
+                leftSeedRoll: 0,
                 notOnSeedRoll: 0,
                 excluded: 0,
                 filtered: 0
@@ -1044,9 +1096,11 @@ const Processor = {
         
         // THE ONLY REAL ELIGIBILITY FILTER - Seed roll check with removal reasons
         // Everything else is just labeling why they weren't on it
-        result = DataTransformer.filterBySeedRollWithReasons(data, state.seedRoll.ids);
+        result = DataTransformer.filterBySeedRollWithReasons(data, state.seedRoll.ids, state.seedRoll.leftIds);
         data = result.data;
-        state.stats.removed.notOnSeedRoll = result.removed.length;
+        const leftSeedRollRemoved = result.removed.filter(r => r.reason === 'Student Left (Seed Roll)').length;
+        state.stats.removed.leftSeedRoll = leftSeedRollRemoved;
+        state.stats.removed.notOnSeedRoll = result.removed.length - leftSeedRollRemoved;
         state.csv.removed.push(...result.removed);
         
         // Filter excluded students (already uploaded to Kindo)
@@ -1398,9 +1452,10 @@ const EventHandlers = {
         const result = SeedRollParser.parse(text);
         state.seedRoll.ids = result.ids;
         state.seedRoll.idMap = result.idMap;
+        state.seedRoll.leftIds = result.leftIds || [];
         
         const statusEl = document.getElementById('seedRollStatus');
-        statusEl.textContent = `✓ Loaded ${result.ids.length} students`;
+        statusEl.textContent = `✓ Loaded ${result.ids.length} active students${state.seedRoll.leftIds.length ? ` (excluded ${state.seedRoll.leftIds.length} left)` : ''}`;
         statusEl.className = 'status-message success';
         
         UI.showStatus('Seed roll loaded successfully.', 'success');
@@ -1484,12 +1539,19 @@ const EventHandlers = {
         // Reset state
         state.csv = { raw: [], processed: [], removed: [] };
         state.charges = { raw: [], map: {} };
-        state.seedRoll = { ids: [], idMap: {} };
+        state.seedRoll = { ids: [], idMap: {}, leftIds: [] };
         state.exclude = { ids: [] };
         state.config = { schoolName: '', moeFallback: '' };
         state.stats = { 
             original: 0, 
-            removed: {}, 
+            removed: {
+                zeroOwing: 0,
+                hasLeft: 0,
+                leftSeedRoll: 0,
+                notOnSeedRoll: 0,
+                excluded: 0,
+                filtered: 0
+            }, 
             final: 0,
             payableSources: { 
                 fromCharges: 0, 
