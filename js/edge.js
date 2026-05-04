@@ -867,30 +867,77 @@ function displayEdgeKindoCommands() {
     
     const kindoContainer = document.getElementById('kindoCommandsEdge');
     if (!kindoContainer) return;
+
+    const escAttr = (s) => String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;');
+    const escText = (s) => {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    };
+    const copyText = (text) => {
+        if (!text) return;
+
+        const fallbackCopy = () => {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+            } catch (_) {
+                // Ignore clipboard errors to avoid blocking UI.
+            }
+            document.body.removeChild(textarea);
+        };
+
+        if (navigator.clipboard && window.isSecureContext) {
+            void navigator.clipboard.writeText(text).catch(() => fallbackCopy());
+            return;
+        }
+
+        fallbackCopy();
+    };
     
     const payablesFile = `${schoolSlug}_payables.csv`;
     const pcatsFile = `${schoolSlug}_pcats.csv`;
     const outstandingsFile = `${schoolSlug}_outstandings.csv`;
+    const cmdPayables = `kp_product_upload_from_incoming_file ${supplierId} ${payablesFile} -preview`;
+    const cmdPcats = `kp_pcat_setting_from_incoming_file "${schoolId}" ${pcatsFile} -preview`;
+    const cmdOutstandings = `kp_load_payables_from_incoming_file ${outstandingsFile} -preview`;
     
     kindoContainer.innerHTML = `
         <div style="margin-top: 24px; padding: 12px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 4px;">
             <h4 style="margin: 0 0 8px 0; font-size: 14px; color: #666;">KD Upload Commands:</h4>
             <div style="font-family: monospace; font-size: 12px; line-height: 1.8;">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <code style="flex: 1; background: white; padding: 4px 8px; border-radius: 3px;">kp_product_upload_from_incoming_file ${supplierId} ${payablesFile} -preview</code>
-                    <button onclick="navigator.clipboard.writeText('kp_product_upload_from_incoming_file ${supplierId} ${payablesFile} -preview')" style="padding: 4px 8px; font-size: 11px; cursor: pointer;">Copy</button>
+                    <code style="flex: 1; background: white; padding: 4px 8px; border-radius: 3px;">${escText(cmdPayables)}</code>
+                    <button type="button" data-kindo-copy="${escAttr(cmdPayables)}" style="padding: 4px 8px; font-size: 11px; cursor: pointer;">Copy</button>
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <code style="flex: 1; background: white; padding: 4px 8px; border-radius: 3px;">kp_pcat_setting_from_incoming_file "${schoolId}" ${pcatsFile} -preview</code>
-                    <button onclick="navigator.clipboard.writeText('kp_pcat_setting_from_incoming_file \"${schoolId}\" ${pcatsFile} -preview')" style="padding: 4px 8px; font-size: 11px; cursor: pointer;">Copy</button>
+                    <code style="flex: 1; background: white; padding: 4px 8px; border-radius: 3px;">${escText(cmdPcats)}</code>
+                    <button type="button" data-kindo-copy="${escAttr(cmdPcats)}" style="padding: 4px 8px; font-size: 11px; cursor: pointer;">Copy</button>
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <code style="flex: 1; background: white; padding: 4px 8px; border-radius: 3px;">kp_load_payables_from_incoming_file ${outstandingsFile} -preview</code>
-                    <button onclick="navigator.clipboard.writeText('kp_load_payables_from_incoming_file ${outstandingsFile} -preview')" style="padding: 4px 8px; font-size: 11px; cursor: pointer;">Copy</button>
+                    <code style="flex: 1; background: white; padding: 4px 8px; border-radius: 3px;">${escText(cmdOutstandings)}</code>
+                    <button type="button" data-kindo-copy="${escAttr(cmdOutstandings)}" style="padding: 4px 8px; font-size: 11px; cursor: pointer;">Copy</button>
                 </div>
             </div>
         </div>
     `;
+    kindoContainer.querySelectorAll('[data-kindo-copy]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const codeEl = btn.closest('div')?.querySelector('code');
+            const text = (codeEl && codeEl.textContent) || btn.getAttribute('data-kindo-copy') || '';
+            copyText(text);
+        });
+    });
 }
 
 function displayEdgeRemovedWithMatches() {
